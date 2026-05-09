@@ -105,17 +105,20 @@ async def handle_menu_category(message: Message) -> None:
 
     formatted = _format_recipe_from_markdown(content)
 
-    # Добавляем inline-кнопки
+    # Добавляем inline-кнопки (используем кэш-ключи вместо slug)
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-    builder = InlineKeyboardBuilder()
+    rk = f"r{len(config._callback_cache)}"
+    config._callback_cache[rk] = {"category": category, "slug": slug}
+
     cc = config.CATEGORY_TO_CODE.get(category, "o")
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
     builder.button(
         text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
     )
     builder.button(
-        text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}"
+        text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
     )
     builder.adjust(2, 1)
 
@@ -170,13 +173,16 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+    rk = f"r{len(config._callback_cache)}"
+    config._callback_cache[rk] = {"category": category, "slug": slug}
+
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
     builder.button(
         text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
     )
     builder.button(
-        text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}"
+        text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
     )
     builder.adjust(2, 1)
 

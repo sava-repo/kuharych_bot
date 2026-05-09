@@ -33,6 +33,19 @@ def _extract_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+# Счётчик для генерации коротких ключей кэша
+_cache_counter = 0
+
+
+def _cache_recipe(category: str, slug: str) -> str:
+    """Сохраняет рецепт в кэш, возвращает короткий ключ (r0, r1, ...)"""
+    global _cache_counter
+    key = f"r{_cache_counter}"
+    _cache_counter += 1
+    config._callback_cache[key] = {"category": category, "slug": slug}
+    return key
+
+
 def _cat_code(category: str) -> str:
     """Короткий код категории для callback_data"""
     return config.CATEGORY_TO_CODE.get(category, "o")
@@ -40,28 +53,29 @@ def _cat_code(category: str) -> str:
 
 def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
+    rk = _cache_recipe(category, slug)
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
-    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
     builder.adjust(2)
     return builder.as_markup()
 
 
 def _duplicate_keyboard(category: str, slug: str, sha: str) -> InlineKeyboardMarkup:
     """Клавиатура при обнаружении дубликата"""
-    # Сохраняем SHA в кэш, используем ключ в callback_data
-    cache_key = f"{slug}:{sha[:8]}"
-    config._callback_cache[cache_key] = {"sha": sha, "category": category, "slug": slug}
+    rk = _cache_recipe(category, slug)
+    # Сохраняем SHA отдельно в тот же ключ
+    config._callback_cache[rk]["sha"] = sha
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(
         text="✏️ Перезаписать",
-        callback_data=f"ow:{cc}:{slug}:{cache_key}",
+        callback_data=f"ow:{cc}:{rk}",
     )
     builder.button(
         text="📝 Сохранить как новый",
-        callback_data=f"sn:{cc}:{slug}",
+        callback_data=f"sn:{cc}:{rk}",
     )
     builder.adjust(2)
     return builder.as_markup()

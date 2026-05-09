@@ -5,7 +5,7 @@ import logging
 
 import httpx
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
@@ -28,25 +28,17 @@ def _cat(code: str) -> str:
     return config.CODE_TO_CATEGORY.get(code, "основное блюдо")
 
 
-def _category_keyboard(action: str, category: str, slug: str) -> InlineKeyboardMarkup:
-    """Клавиатура выбора новой категории"""
-    builder = InlineKeyboardBuilder()
-    for cat in VALID_CATEGORIES:
-        if cat != category:
-            builder.button(
-                text=cat.capitalize(),
-                callback_data=f"mov:{_cc(cat)}:{_cc(category)}:{slug}",
-            )
-    builder.adjust(1)
-    return builder.as_markup()
+def _resolve(rk: str) -> dict | None:
+    """Получает данные рецепта из кэша по ключу"""
+    return config._callback_cache.get(rk)
 
 
-def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
-    """Клавиатура под рецептом"""
+def _recipe_kb(category: str, rk: str) -> dict:
+    """Клавиатура под рецептом — возвращает InlineKeyboardMarkup"""
     cc = _cc(category)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
-    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -63,8 +55,14 @@ async def handle_delete(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, cc, slug = parts
-    category = _cat(cc)
+    _, cc, rk = parts
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    category = cached["category"]
+    slug = cached["slug"]
 
     await callback.answer("Удаляю...")
 
@@ -85,24 +83,26 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
         return
 
     parts = callback.data.split(":")
-    if len(parts) != 4:
+    if len(parts) != 3:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, cc, slug, cache_key = parts
-    category = _cat(cc)
+    _, cc, rk = parts
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    category = cached["category"]
+    slug = cached["slug"]
+    sha = cached.get("sha")
+    if not sha:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
 
     await callback.answer("Перезаписываю...")
 
     try:
-        # Получаем SHA из кэша
-        cached = config._callback_cache.get(cache_key)
-        if not cached:
-            await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
-            return
-
-        sha = cached["sha"]
-
         # Читаем текущий рецепт
         content = await gramax.get_recipe_content(category, f"{slug}.md")
         content_b64 = base64.b64encode(content.encode("utf-8")).decode()
@@ -126,7 +126,7 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
 
         await callback.message.edit_text(
             f"✅ Рецепт «{slug}» перезаписан",
-            reply_markup=_recipe_keyboard(category, slug),
+            reply_markup=_recipe_kb(category, rk),
         )
         logger.info(f"Recipe overwritten via button: {category}/{slug}")
 
@@ -147,8 +147,14 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, cc, slug = parts
-    category = _cat(cc)
+    _, cc, rk = parts
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    category = cached["category"]
+    slug = cached["slug"]
 
     await callback.answer("Сохраняю как новый...")
 
@@ -157,7 +163,8 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         content = await gramax.get_recipe_content(category, f"{slug}.md")
 
         # Создаём новый файл с суффиксом -2
-        new_filename = f"{slug}-2.md"
+        new_slug = f"{slug}-2"
+        new_filename = f"{new_slug}.md"
         content_b64 = base64.b64encode(content.encode("utf-8")).decode()
 
         filepath = f"receipts/{category}/{new_filename}"
@@ -168,7 +175,7 @@ async def handle_save_new(callback: CallbackQuery) -> None:
                 url,
                 headers=gramax._headers(),
                 json={
-                    "message": f"Add recipe (copy): {slug}-2",
+                    "message": f"Add recipe (copy): {new_slug}",
                     "content": content_b64,
                 },
             )
@@ -176,10 +183,13 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
 
-        new_slug = f"{slug}-2"
+        # Кэшируем новый slug
+        new_rk = f"r{len(config._callback_cache)}"
+        config._callback_cache[new_rk] = {"category": category, "slug": new_slug}
+
         await callback.message.edit_text(
             f"✅ Рецепт сохранён как «{new_slug}»",
-            reply_markup=_recipe_keyboard(category, new_slug),
+            reply_markup=_recipe_kb(category, new_rk),
         )
         logger.info(f"Recipe saved as new via button: {category}/{new_slug}")
 
@@ -200,12 +210,28 @@ async def handle_recat(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, cc, slug = parts
-    category = _cat(cc)
+    _, cc, rk = parts
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    category = cached["category"]
+    slug = cached["slug"]
+
+    # Клавиатура выбора новой категории
+    builder = InlineKeyboardBuilder()
+    for cat in VALID_CATEGORIES:
+        if cat != category:
+            builder.button(
+                text=cat.capitalize(),
+                callback_data=f"mov:{_cc(cat)}:{_cc(category)}:{rk}",
+            )
+    builder.adjust(1)
 
     await callback.message.edit_text(
         f"📂 Выберите новую категорию для «{slug}»:",
-        reply_markup=_category_keyboard("rcat", category, slug),
+        reply_markup=builder.as_markup(),
     )
 
 
@@ -221,9 +247,15 @@ async def handle_move(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, new_cc, old_cc, slug = parts
+    _, new_cc, old_cc, rk = parts
     new_category = _cat(new_cc)
     old_category = _cat(old_cc)
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    slug = cached["slug"]
 
     await callback.answer(f"Перемещаю в «{new_category}»...")
 
@@ -256,9 +288,12 @@ async def handle_move(callback: CallbackQuery) -> None:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
 
+        # Обновляем кэш
+        config._callback_cache[rk] = {"category": new_category, "slug": slug}
+
         await callback.message.edit_text(
             f"✅ Рецепт «{slug}» перемещён в «{new_category}»",
-            reply_markup=_recipe_keyboard(new_category, slug),
+            reply_markup=_recipe_kb(new_category, rk),
         )
         logger.info(f"Recipe moved: {old_category}/{slug} -> {new_category}/{slug}")
 
