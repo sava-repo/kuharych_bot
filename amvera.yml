@@ -6,3 +6,4 @@ meta:
 build: {}
 run:
   scriptName: bot.py
+  persistenceMount: /data
