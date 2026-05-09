@@ -61,7 +61,7 @@ async def transcribe_audio(wav_path: str) -> str:
     """
     logger.info(f"Transcribing: {wav_path}")
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         with open(wav_path, "rb") as audio_file:
             files = {
                 "file": ("audio.wav", audio_file, "audio/wav"),

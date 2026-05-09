@@ -110,7 +110,7 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
         filepath = f"receipts/{category}/{slug}.md"
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.put(
                 url,
                 headers=gramax._headers(),
@@ -170,7 +170,7 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         filepath = f"receipts/{category}/{new_filename}"
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.put(
                 url,
                 headers=gramax._headers(),
@@ -275,7 +275,7 @@ async def handle_move(callback: CallbackQuery) -> None:
 
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.put(
                 url,
                 headers=gramax._headers(),

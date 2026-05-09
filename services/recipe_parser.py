@@ -176,7 +176,7 @@ async def generate_recipe(transcription: str, caption: str | None, source: str) 
 
     logger.info(f"Sending to GLM-5: transcription={len(transcription)} chars, caption={bool(caption)}")
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         response = await client.post(
             config.GLM_API_URL,
             headers={

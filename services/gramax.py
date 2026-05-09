@@ -29,7 +29,7 @@ async def _ensure_category_dir(category: str) -> None:
     gitkeep_path = f"receipts/{category}/.gitkeep"
     url = _api_url(gitkeep_path)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         # Проверяем существует ли уже
         resp = await client.get(url, headers=_headers())
         if resp.status_code == 200:
@@ -58,7 +58,7 @@ async def check_duplicate(category: str, slug: str) -> dict | None:
     """
     url = _api_url(f"receipts/{category}/{slug}.md")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.get(url, headers=_headers())
 
     if resp.status_code == 200:
@@ -86,7 +86,7 @@ async def save_recipe(recipe: Recipe) -> str:
     filepath = f"receipts/{category}/{slug}.md"
     url = _api_url(filepath)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.put(
             url,
             headers=_headers(),
@@ -117,7 +117,7 @@ async def overwrite_recipe(recipe: Recipe, sha: str) -> str:
     filepath = f"receipts/{category}/{slug}.md"
     url = _api_url(filepath)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.put(
             url,
             headers=_headers(),
@@ -164,7 +164,7 @@ async def delete_recipe(category: str, slug: str) -> None:
     # Сначала получаем SHA
     url = _api_url(f"receipts/{category}/{slug}.md")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.get(url, headers=_headers())
 
         if resp.status_code != 200:
@@ -196,7 +196,7 @@ async def list_recipes_in_category(category: str) -> list[dict]:
     """
     url = _api_url(f"receipts/{category}/")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.get(url, headers=_headers())
 
     if resp.status_code == 404:
@@ -222,7 +222,7 @@ async def get_recipe_content(category: str, filename: str) -> str:
     """
     url = _api_url(f"receipts/{category}/{filename}")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         resp = await client.get(url, headers=_headers())
 
     if resp.status_code != 200:
