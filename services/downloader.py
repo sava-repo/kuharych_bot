@@ -34,8 +34,13 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
         "format": "mp4",
         "quiet": True,
         "no_warnings": True,
-        # Начиная с yt-dlp 2024, extract_flat не нужен для получения description
     }
+
+    # Cookies для Instagram (обход rate-limit)
+    cookies_file = Path(config.INSTAGRAM_COOKIES_FILE)
+    if cookies_file.exists():
+        ydl_opts["cookiefile"] = str(cookies_file)
+        logger.info(f"Using cookies from: {cookies_file}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

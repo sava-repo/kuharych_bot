@@ -35,6 +35,9 @@ WHITELIST_CHAT_IDS: list[int] = [
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+# Cookies для Instagram (Netscape формат, экспорт из браузера)
+INSTAGRAM_COOKIES_FILE: str = os.getenv("INSTAGRAM_COOKIES_FILE", "data/instagram_cookies.txt")
+
 # Limits
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты
 MIN_TRANSCRIPTION_WORDS: int = 10
