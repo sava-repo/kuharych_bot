@@ -8,6 +8,7 @@ from pathlib import Path
 import yt_dlp
 
 import config
+import services.instagram_auth as instagram_auth
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,16 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
     }
 
     # Cookies для Instagram (обход rate-limit)
+    is_instagram = "instagram.com" in url
     cookies_file = Path(config.INSTAGRAM_COOKIES_FILE)
+
+    if is_instagram:
+        # Авто-обновление cookies при необходимости
+        try:
+            instagram_auth.refresh_cookies_if_needed()
+        except Exception as e:
+            logger.warning(f"Failed to refresh Instagram cookies: {e}")
+
     if cookies_file.exists():
         ydl_opts["cookiefile"] = str(cookies_file)
         logger.info(f"Using cookies from: {cookies_file}")
