@@ -3,6 +3,7 @@
 import base64
 import logging
 from datetime import date
+from typing import Any
 
 import httpx
 
@@ -10,6 +11,8 @@ import config
 from models.recipe import Recipe
 
 logger = logging.getLogger(__name__)
+
+MAX_REDIRECTS = 5
 
 
 def _api_url(path: str = "") -> str:
@@ -24,31 +27,71 @@ def _headers() -> dict[str, str]:
     }
 
 
+async def _github_request(
+    method: str,
+    url: str,
+    *,
+    json: dict | None = None,
+    timeout: int = 30,
+) -> httpx.Response:
+    """
+    Выполняет запрос к GitHub API с ручной обработкой редиректов.
+    GitHub API иногда возвращает 302 для URL с кириллицей,
+    при этом httpx при follow_redirects сбрасывает Authorization.
+    Поэтому обрабатываем редиректы вручную, сохраняя заголовки.
+    """
+    headers = _headers()
+    current_url = url
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(MAX_REDIRECTS + 1):
+            if json is not None:
+                resp = await client.request(
+                    method, current_url, headers=headers, json=json
+                )
+            else:
+                resp = await client.request(method, current_url, headers=headers)
+
+            if resp.status_code in (301, 302, 303, 307, 308):
+                redirect_url = resp.headers.get("location")
+                if not redirect_url:
+                    break
+                logger.debug(f"GitHub redirect {resp.status_code}: {current_url} -> {redirect_url}")
+                current_url = redirect_url
+                # Для 303 меняем метод на GET
+                if resp.status_code == 303:
+                    method = "GET"
+                    json = None
+                continue
+
+            break
+
+    return resp
+
+
 async def _ensure_category_dir(category: str) -> None:
     """Создаёт папку категории через .gitkeep если её нет"""
     gitkeep_path = f"receipts/{category}/.gitkeep"
     url = _api_url(gitkeep_path)
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        # Проверяем существует ли уже
-        resp = await client.get(url, headers=_headers())
-        if resp.status_code == 200:
-            return  # Уже существует
+    resp = await _github_request("GET", url)
+    if resp.status_code == 200:
+        return  # Уже существует
 
-        # Создаём .gitkeep
-        content_b64 = base64.b64encode(b"").decode()
-        resp = await client.put(
-            url,
-            headers=_headers(),
-            json={
-                "message": f"Create category: {category}",
-                "content": content_b64,
-            },
-        )
-        if resp.status_code in (200, 201):
-            logger.info(f"Created category dir: {category}")
-        else:
-            logger.warning(f"Failed to create category dir: {resp.status_code} {resp.text}")
+    # Создаём .gitkeep
+    content_b64 = base64.b64encode(b"").decode()
+    resp = await _github_request(
+        "PUT",
+        url,
+        json={
+            "message": f"Create category: {category}",
+            "content": content_b64,
+        },
+    )
+    if resp.status_code in (200, 201):
+        logger.info(f"Created category dir: {category}")
+    else:
+        logger.warning(f"Failed to create category dir: {resp.status_code} {resp.text}")
 
 
 async def check_duplicate(category: str, slug: str) -> dict | None:
@@ -57,9 +100,7 @@ async def check_duplicate(category: str, slug: str) -> dict | None:
     Возвращает данные файла если найден, иначе None.
     """
     url = _api_url(f"receipts/{category}/{slug}.md")
-
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.get(url, headers=_headers())
+    resp = await _github_request("GET", url)
 
     if resp.status_code == 200:
         data = resp.json()
@@ -86,15 +127,14 @@ async def save_recipe(recipe: Recipe) -> str:
     filepath = f"receipts/{category}/{slug}.md"
     url = _api_url(filepath)
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.put(
-            url,
-            headers=_headers(),
-            json={
-                "message": f"Add recipe: {recipe.title}",
-                "content": content_b64,
-            },
-        )
+    resp = await _github_request(
+        "PUT",
+        url,
+        json={
+            "message": f"Add recipe: {recipe.title}",
+            "content": content_b64,
+        },
+    )
 
     if resp.status_code not in (200, 201):
         logger.error(f"GitHub API save error: {resp.status_code} {resp.text}")
@@ -117,16 +157,15 @@ async def overwrite_recipe(recipe: Recipe, sha: str) -> str:
     filepath = f"receipts/{category}/{slug}.md"
     url = _api_url(filepath)
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.put(
-            url,
-            headers=_headers(),
-            json={
-                "message": f"Update recipe: {recipe.title}",
-                "content": content_b64,
-                "sha": sha,
-            },
-        )
+    resp = await _github_request(
+        "PUT",
+        url,
+        json={
+            "message": f"Update recipe: {recipe.title}",
+            "content": content_b64,
+            "sha": sha,
+        },
+    )
 
     if resp.status_code not in (200, 201):
         logger.error(f"GitHub API overwrite error: {resp.status_code} {resp.text}")
@@ -164,23 +203,21 @@ async def delete_recipe(category: str, slug: str) -> None:
     # Сначала получаем SHA
     url = _api_url(f"receipts/{category}/{slug}.md")
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.get(url, headers=_headers())
+    resp = await _github_request("GET", url)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Файл не найден: {resp.status_code}")
 
-        if resp.status_code != 200:
-            raise RuntimeError(f"Файл не найден: {resp.status_code}")
+    sha = resp.json()["sha"]
 
-        sha = resp.json()["sha"]
-
-        # Удаляем
-        resp = await client.delete(
-            url,
-            headers=_headers(),
-            json={
-                "message": f"Delete recipe: {slug}",
-                "sha": sha,
-            },
-        )
+    # Удаляем
+    resp = await _github_request(
+        "DELETE",
+        url,
+        json={
+            "message": f"Delete recipe: {slug}",
+            "sha": sha,
+        },
+    )
 
     if resp.status_code not in (200, 201):
         logger.error(f"GitHub API delete error: {resp.status_code} {resp.text}")
@@ -195,9 +232,7 @@ async def list_recipes_in_category(category: str) -> list[dict]:
     Каждый элемент: {"name": "slug.md", "path": "receipts/category/slug.md"}
     """
     url = _api_url(f"receipts/{category}/")
-
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.get(url, headers=_headers())
+    resp = await _github_request("GET", url)
 
     if resp.status_code == 404:
         return []
@@ -221,9 +256,7 @@ async def get_recipe_content(category: str, filename: str) -> str:
     Возвращает декодированный Markdown.
     """
     url = _api_url(f"receipts/{category}/{filename}")
-
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        resp = await client.get(url, headers=_headers())
+    resp = await _github_request("GET", url)
 
     if resp.status_code != 200:
         logger.error(f"GitHub API get error: {resp.status_code} {resp.text}")

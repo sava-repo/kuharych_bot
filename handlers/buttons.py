@@ -3,7 +3,6 @@
 import base64
 import logging
 
-import httpx
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -110,16 +109,15 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
         filepath = f"receipts/{category}/{slug}.md"
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.put(
-                url,
-                headers=gramax._headers(),
-                json={
-                    "message": f"Overwrite recipe: {slug}",
-                    "content": content_b64,
-                    "sha": sha,
-                },
-            )
+        resp = await gramax._github_request(
+            "PUT",
+            url,
+            json={
+                "message": f"Overwrite recipe: {slug}",
+                "content": content_b64,
+                "sha": sha,
+            },
+        )
 
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
@@ -170,15 +168,14 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         filepath = f"receipts/{category}/{new_filename}"
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.put(
-                url,
-                headers=gramax._headers(),
-                json={
-                    "message": f"Add recipe (copy): {new_slug}",
-                    "content": content_b64,
-                },
-            )
+        resp = await gramax._github_request(
+            "PUT",
+            url,
+            json={
+                "message": f"Add recipe (copy): {new_slug}",
+                "content": content_b64,
+            },
+        )
 
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
@@ -275,15 +272,14 @@ async def handle_move(callback: CallbackQuery) -> None:
 
         url = gramax._api_url(filepath)
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.put(
-                url,
-                headers=gramax._headers(),
-                json={
-                    "message": f"Move recipe: {slug} from {old_category} to {new_category}",
-                    "content": content_b64,
-                },
-            )
+        resp = await gramax._github_request(
+            "PUT",
+            url,
+            json={
+                "message": f"Move recipe: {slug} from {old_category} to {new_category}",
+                "content": content_b64,
+            },
+        )
 
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
