@@ -33,25 +33,35 @@ def _extract_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _cat_code(category: str) -> str:
+    """Короткий код категории для callback_data"""
+    return config.CATEGORY_TO_CODE.get(category, "o")
+
+
 def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
+    cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"delete:{category}:{slug}")
-    builder.button(text="📂 Другая категория", callback_data=f"recat:{category}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}")
     builder.adjust(2)
     return builder.as_markup()
 
 
 def _duplicate_keyboard(category: str, slug: str, sha: str) -> InlineKeyboardMarkup:
     """Клавиатура при обнаружении дубликата"""
+    # Сохраняем SHA в кэш, используем ключ в callback_data
+    cache_key = f"{slug}:{sha[:8]}"
+    config._callback_cache[cache_key] = {"sha": sha, "category": category, "slug": slug}
+    cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(
         text="✏️ Перезаписать",
-        callback_data=f"overwrite:{category}:{slug}:{sha}",
+        callback_data=f"ow:{cc}:{slug}:{cache_key}",
     )
     builder.button(
         text="📝 Сохранить как новый",
-        callback_data=f"save_new:{category}:{slug}",
+        callback_data=f"sn:{cc}:{slug}",
     )
     builder.adjust(2)
     return builder.as_markup()

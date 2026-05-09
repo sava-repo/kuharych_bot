@@ -1,7 +1,9 @@
 """Обработка inline/callback кнопок"""
 
+import base64
 import logging
 
+import httpx
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -16,6 +18,16 @@ router = Router()
 VALID_CATEGORIES = ["завтрак", "основное блюдо", "десерт"]
 
 
+def _cc(category: str) -> str:
+    """Короткий код категории"""
+    return config.CATEGORY_TO_CODE.get(category, "o")
+
+
+def _cat(code: str) -> str:
+    """Категория по короткому коду"""
+    return config.CODE_TO_CATEGORY.get(code, "основное блюдо")
+
+
 def _category_keyboard(action: str, category: str, slug: str) -> InlineKeyboardMarkup:
     """Клавиатура выбора новой категории"""
     builder = InlineKeyboardBuilder()
@@ -23,7 +35,7 @@ def _category_keyboard(action: str, category: str, slug: str) -> InlineKeyboardM
         if cat != category:
             builder.button(
                 text=cat.capitalize(),
-                callback_data=f"move:{action}:{category}:{slug}:{cat}",
+                callback_data=f"mov:{_cc(cat)}:{_cc(category)}:{slug}",
             )
     builder.adjust(1)
     return builder.as_markup()
@@ -31,17 +43,17 @@ def _category_keyboard(action: str, category: str, slug: str) -> InlineKeyboardM
 
 def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
+    cc = _cc(category)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"delete:{category}:{slug}")
-    builder.button(text="📂 Другая категория", callback_data=f"recat:{category}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}")
     builder.adjust(2)
     return builder.as_markup()
 
 
-@router.callback_query(F.data.startswith("delete:"))
+@router.callback_query(F.data.startswith("del:"))
 async def handle_delete(callback: CallbackQuery) -> None:
     """Удаление рецепта"""
-    # Проверка whitelist
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
         await callback.answer("Нет доступа", show_alert=True)
         return
@@ -51,7 +63,8 @@ async def handle_delete(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, category, slug = parts
+    _, cc, slug = parts
+    category = _cat(cc)
 
     await callback.answer("Удаляю...")
 
@@ -64,7 +77,7 @@ async def handle_delete(callback: CallbackQuery) -> None:
         await callback.message.edit_text("❌ Не удалось удалить рецепт. Попробуйте позже")
 
 
-@router.callback_query(F.data.startswith("overwrite:"))
+@router.callback_query(F.data.startswith("ow:"))
 async def handle_overwrite(callback: CallbackQuery) -> None:
     """Перезапись существующего рецепта"""
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
@@ -76,26 +89,26 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, category, slug, sha = parts
+    _, cc, slug, cache_key = parts
+    category = _cat(cc)
 
     await callback.answer("Перезаписываю...")
 
     try:
+        # Получаем SHA из кэша
+        cached = config._callback_cache.get(cache_key)
+        if not cached:
+            await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+            return
+
+        sha = cached["sha"]
+
         # Читаем текущий рецепт
         content = await gramax.get_recipe_content(category, f"{slug}.md")
-
-        # Перезаписываем с тем же контентом (или можно обновить)
-        # Здесь мы просто обновляем SHA — пользователь уже подтвердил перезапись
-        # На практике рецепт уже был сгенерирован, но мы потеряли его в callback
-        # Поэтому используем содержимое из GitHub для перезаписи
-        import base64
-
         content_b64 = base64.b64encode(content.encode("utf-8")).decode()
 
         filepath = f"receipts/{category}/{slug}.md"
         url = gramax._api_url(filepath)
-
-        import httpx
 
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.put(
@@ -122,7 +135,7 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
         await callback.message.edit_text("❌ Не удалось перезаписать рецепт. Попробуйте позже")
 
 
-@router.callback_query(F.data.startswith("save_new:"))
+@router.callback_query(F.data.startswith("sn:"))
 async def handle_save_new(callback: CallbackQuery) -> None:
     """Сохранение рецепта с новым названием"""
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
@@ -134,7 +147,8 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, category, slug = parts
+    _, cc, slug = parts
+    category = _cat(cc)
 
     await callback.answer("Сохраняю как новый...")
 
@@ -144,10 +158,6 @@ async def handle_save_new(callback: CallbackQuery) -> None:
 
         # Создаём новый файл с суффиксом -2
         new_filename = f"{slug}-2.md"
-
-        import base64
-        import httpx
-
         content_b64 = base64.b64encode(content.encode("utf-8")).decode()
 
         filepath = f"receipts/{category}/{new_filename}"
@@ -178,7 +188,7 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         await callback.message.edit_text("❌ Не удалось сохранить рецепт. Попробуйте позже")
 
 
-@router.callback_query(F.data.startswith("recat:"))
+@router.callback_query(F.data.startswith("rcat:"))
 async def handle_recat(callback: CallbackQuery) -> None:
     """Выбор новой категории для рецепта"""
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
@@ -190,15 +200,16 @@ async def handle_recat(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, category, slug = parts
+    _, cc, slug = parts
+    category = _cat(cc)
 
     await callback.message.edit_text(
         f"📂 Выберите новую категорию для «{slug}»:",
-        reply_markup=_category_keyboard("recat", category, slug),
+        reply_markup=_category_keyboard("rcat", category, slug),
     )
 
 
-@router.callback_query(F.data.startswith("move:"))
+@router.callback_query(F.data.startswith("mov:"))
 async def handle_move(callback: CallbackQuery) -> None:
     """Перемещение рецепта в другую категорию"""
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
@@ -206,11 +217,13 @@ async def handle_move(callback: CallbackQuery) -> None:
         return
 
     parts = callback.data.split(":")
-    if len(parts) != 5:
+    if len(parts) != 4:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, action, old_category, slug, new_category = parts
+    _, new_cc, old_cc, slug = parts
+    new_category = _cat(new_cc)
+    old_category = _cat(old_cc)
 
     await callback.answer(f"Перемещаю в «{new_category}»...")
 
@@ -222,11 +235,7 @@ async def handle_move(callback: CallbackQuery) -> None:
         await gramax.delete_recipe(old_category, slug)
 
         # Сохраняем в новой категории
-        import base64
-        import httpx
-
         content_b64 = base64.b64encode(content.encode("utf-8")).decode()
-
         filepath = f"receipts/{new_category}/{slug}.md"
 
         # Убедимся что категория существует

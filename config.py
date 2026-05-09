@@ -39,3 +39,14 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты
 MIN_TRANSCRIPTION_WORDS: int = 10
 PROCESSING_TIMEOUT_SEC: int = 120
+
+# Короткие коды категорий для callback_data (лимит 64 байта)
+CATEGORY_TO_CODE: dict[str, str] = {
+    "завтрак": "z",
+    "основное блюдо": "o",
+    "десерт": "d",
+}
+CODE_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_TO_CODE.items()}
+
+# In-memory кэш для SHA и данных дубликатов (key -> data)
+_callback_cache: dict[str, dict] = {}

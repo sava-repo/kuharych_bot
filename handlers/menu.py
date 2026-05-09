@@ -109,12 +109,13 @@ async def handle_menu_category(message: Message) -> None:
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"delete:{category}:{slug}")
+    cc = config.CATEGORY_TO_CODE.get(category, "o")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
     builder.button(
-        text="🎲 Другой рецепт", callback_data=f"random:{category}"
+        text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
     )
     builder.button(
-        text="📂 Другая категория", callback_data=f"recat:{category}:{slug}"
+        text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}"
     )
     builder.adjust(2, 1)
 
@@ -124,7 +125,7 @@ async def handle_menu_category(message: Message) -> None:
     )
 
 
-@router.callback_query(F.data.startswith("random:"))
+@router.callback_query(F.data.startswith("rnd:"))
 async def handle_random_callback(callback: CallbackQuery) -> None:
     """Обработка кнопки 'Другой рецепт'"""
     if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
@@ -136,7 +137,8 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, category = parts
+    _, cc = parts
+    category = config.CODE_TO_CATEGORY.get(cc, "основное блюдо")
 
     await callback.answer("Выбираю другой рецепт...")
 
@@ -169,12 +171,12 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"delete:{category}:{slug}")
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{slug}")
     builder.button(
-        text="🎲 Другой рецепт", callback_data=f"random:{category}"
+        text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
     )
     builder.button(
-        text="📂 Другая категория", callback_data=f"recat:{category}:{slug}"
+        text="📂 Другая категория", callback_data=f"rcat:{cc}:{slug}"
     )
     builder.adjust(2, 1)
 
