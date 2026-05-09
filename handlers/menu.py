@@ -4,7 +4,7 @@ import logging
 import random
 
 from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 import config
