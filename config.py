@@ -25,7 +25,7 @@ GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO: str = os.getenv("GITHUB_REPO", "sava-repo/new-catalog-2")
 GITHUB_API_BASE: str = "https://api.github.com"
 
-# Whitelist
+# Whitelist (deprecated — доступ управляется через группы)
 WHITELIST_CHAT_IDS: list[int] = [
     int(cid.strip())
     for cid in os.getenv("WHITELIST_CHAT_IDS", "").split(",")

@@ -5,10 +5,11 @@ import random
 
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 import config
 import services.gramax as gramax
+import services.group_manager as gm
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ MENU_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton(text="🌅 Завтрак")],
         [KeyboardButton(text="🍽 Основное блюдо")],
         [KeyboardButton(text="🍰 Десерт")],
+        [KeyboardButton(text="👥 Мои группы")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -70,31 +72,27 @@ def _format_recipe_from_markdown(md_content: str) -> str:
 @router.message(F.text.in_(["🌅 Завтрак", "🍽 Основное блюдо", "🍰 Десерт"]))
 async def handle_menu_category(message: Message) -> None:
     """Обработка нажатия кнопки меню — случайный рецепт из категории"""
-    if message.chat.id not in config.WHITELIST_CHAT_IDS:
-        return
-
+    user_id = message.from_user.id
+    group_id = gm.get_user_active_group(user_id)
     category = _parse_category(message.text)
     if not category:
         return
 
-    try:
-        recipes = await gramax.list_recipes_in_category(category)
-    except Exception as e:
-        logger.error(f"List recipes error: {e}", exc_info=True)
-        await message.answer("❌ База рецептов временно недоступна. Попробуйте позже")
-        return
+    # Получаем рецепты только из текущей группы
+    group_slugs = gm.get_group_recipes_by_category(group_id, category)
 
-    if not recipes:
+    if not group_slugs:
+        group = gm.get_group(group_id)
+        group_name = group.name if group else "Неизвестная"
         await message.answer(
-            f"📭 Пока нет рецептов в категории «{category}».\n"
+            f"📭 Пока нет рецептов в категории «{category}» в группе «{group_name}».\n"
             f"Отправьте мне ссылку на рилс с рецептом!"
         )
         return
 
-    # Выбираем случайный рецепт
-    random_recipe = random.choice(recipes)
-    filename = random_recipe["name"]
-    slug = filename.replace(".md", "")
+    # Выбираем случайный рецепт из группы
+    slug = random.choice(group_slugs)
+    filename = f"{slug}.md"
 
     try:
         content = await gramax.get_recipe_content(category, filename)
@@ -105,11 +103,9 @@ async def handle_menu_category(message: Message) -> None:
 
     formatted = _format_recipe_from_markdown(content)
 
-    # Добавляем inline-кнопки (используем кэш-ключи вместо slug)
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+    # Добавляем inline-кнопки
     rk = f"r{len(config._callback_cache)}"
-    config._callback_cache[rk] = {"category": category, "slug": slug}
+    config._callback_cache[rk] = {"category": category, "slug": slug, "group_id": group_id}
 
     cc = config.CATEGORY_TO_CODE.get(category, "o")
     builder = InlineKeyboardBuilder()
@@ -131,9 +127,8 @@ async def handle_menu_category(message: Message) -> None:
 @router.callback_query(F.data.startswith("rnd:"))
 async def handle_random_callback(callback: CallbackQuery) -> None:
     """Обработка кнопки 'Другой рецепт'"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
+    user_id = callback.from_user.id
+    group_id = gm.get_user_active_group(user_id)
 
     parts = callback.data.split(":")
     if len(parts) != 2:
@@ -145,22 +140,17 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     await callback.answer("Выбираю другой рецепт...")
 
-    try:
-        recipes = await gramax.list_recipes_in_category(category)
-    except Exception as e:
-        logger.error(f"List recipes error: {e}", exc_info=True)
-        await callback.message.edit_text("❌ База рецептов временно недоступна")
-        return
+    # Получаем рецепты только из текущей группы
+    group_slugs = gm.get_group_recipes_by_category(group_id, category)
 
-    if not recipes:
+    if not group_slugs:
         await callback.message.edit_text(
             f"📭 Пока нет рецептов в категории «{category}»"
         )
         return
 
-    random_recipe = random.choice(recipes)
-    filename = random_recipe["name"]
-    slug = filename.replace(".md", "")
+    slug = random.choice(group_slugs)
+    filename = f"{slug}.md"
 
     try:
         content = await gramax.get_recipe_content(category, filename)
@@ -171,10 +161,8 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     formatted = _format_recipe_from_markdown(content)
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-
     rk = f"r{len(config._callback_cache)}"
-    config._callback_cache[rk] = {"category": category, "slug": slug}
+    config._callback_cache[rk] = {"category": category, "slug": slug, "group_id": group_id}
 
     builder = InlineKeyboardBuilder()
     builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")

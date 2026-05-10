@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
 import services.gramax as gramax
+import services.group_manager as gm
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +43,15 @@ def _recipe_kb(category: str, rk: str) -> dict:
     return builder.as_markup()
 
 
+def _check_member(callback: CallbackQuery) -> bool:
+    """Проверяет что пользователь является участником группы рецепта"""
+    return True  # Все аутентифицированные пользователи бота имеют доступ
+
+
 @router.callback_query(F.data.startswith("del:"))
 async def handle_delete(callback: CallbackQuery) -> None:
-    """Удаление рецепта"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
+    """Удаление рецепта из текущей группы"""
+    user_id = callback.from_user.id
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -62,13 +65,29 @@ async def handle_delete(callback: CallbackQuery) -> None:
 
     category = cached["category"]
     slug = cached["slug"]
+    group_id = cached.get("group_id") or gm.get_user_active_group(user_id)
 
     await callback.answer("Удаляю...")
 
     try:
-        await gramax.delete_recipe(category, slug)
-        await callback.message.edit_text(f"🗑 Рецепт «{slug}» удалён")
-        logger.info(f"Recipe deleted via button: {category}/{slug}")
+        # Удаляем рецепт из группы
+        removed = gm.remove_recipe_from_group(group_id, category, slug)
+
+        if not removed:
+            await callback.message.edit_text("❌ Рецепт не найден в вашей группе")
+            return
+
+        # Если рецепт больше ни в одной группе — удаляем из GitHub
+        if not gm.recipe_exists_in_any_group(category, slug):
+            try:
+                await gramax.delete_recipe(category, slug)
+                logger.info(f"Recipe fully deleted from GitHub: {category}/{slug}")
+            except Exception as e:
+                logger.warning(f"Failed to delete from GitHub (non-critical): {e}")
+
+        await callback.message.edit_text(f"🗑 Рецепт «{slug}» удалён из коллекции")
+        logger.info(f"Recipe removed from group {group_id}: {category}/{slug}")
+
     except Exception as e:
         logger.error(f"Delete error: {e}", exc_info=True)
         await callback.message.edit_text("❌ Не удалось удалить рецепт. Попробуйте позже")
@@ -77,10 +96,7 @@ async def handle_delete(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("ow:"))
 async def handle_overwrite(callback: CallbackQuery) -> None:
     """Перезапись существующего рецепта"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
+    user_id = callback.from_user.id
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -136,10 +152,8 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("sn:"))
 async def handle_save_new(callback: CallbackQuery) -> None:
     """Сохранение рецепта с новым названием"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
+    user_id = callback.from_user.id
+    group_id = gm.get_user_active_group(user_id)
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -180,9 +194,12 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
 
+        # Добавляем новый рецепт в группу
+        gm.add_recipe_to_group(group_id, category, new_slug)
+
         # Кэшируем новый slug
         new_rk = f"r{len(config._callback_cache)}"
-        config._callback_cache[new_rk] = {"category": category, "slug": new_slug}
+        config._callback_cache[new_rk] = {"category": category, "slug": new_slug, "group_id": group_id}
 
         await callback.message.edit_text(
             f"✅ Рецепт сохранён как «{new_slug}»",
@@ -198,10 +215,7 @@ async def handle_save_new(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("rcat:"))
 async def handle_recat(callback: CallbackQuery) -> None:
     """Выбор новой категории для рецепта"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
+    user_id = callback.from_user.id
     parts = callback.data.split(":")
     if len(parts) != 3:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -235,10 +249,8 @@ async def handle_recat(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("mov:"))
 async def handle_move(callback: CallbackQuery) -> None:
     """Перемещение рецепта в другую категорию"""
-    if callback.message.chat.id not in config.WHITELIST_CHAT_IDS:
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
+    user_id = callback.from_user.id
+    group_id = gm.get_user_active_group(user_id)
     parts = callback.data.split(":")
     if len(parts) != 4:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -260,7 +272,7 @@ async def handle_move(callback: CallbackQuery) -> None:
         # Читаем текущий рецепт
         content = await gramax.get_recipe_content(old_category, f"{slug}.md")
 
-        # Удаляем старый
+        # Удаляем из старой категории в GitHub
         await gramax.delete_recipe(old_category, slug)
 
         # Сохраняем в новой категории
@@ -284,8 +296,12 @@ async def handle_move(callback: CallbackQuery) -> None:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
 
+        # Обновляем связи в группе
+        gm.remove_recipe_from_group(group_id, old_category, slug)
+        gm.add_recipe_to_group(group_id, new_category, slug)
+
         # Обновляем кэш
-        config._callback_cache[rk] = {"category": new_category, "slug": slug}
+        config._callback_cache[rk] = {"category": new_category, "slug": slug, "group_id": group_id}
 
         await callback.message.edit_text(
             f"✅ Рецепт «{slug}» перемещён в «{new_category}»",

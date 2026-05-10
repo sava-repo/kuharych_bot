@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
-from handlers import link, buttons, menu
+from handlers import link, buttons, menu, groups
 from services import instagram_auth
 
 logging.basicConfig(
@@ -30,6 +30,7 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     # Регистрируем роутеры
+    dp.include_router(groups.router)  # Группы (FSM states)
     dp.include_router(menu.router)    # Menu должно быть до link, чтобы перехватить кнопки
     dp.include_router(buttons.router) # Callback buttons
     dp.include_router(link.router)    # Обработка ссылок /start /help
