@@ -9,7 +9,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
 from handlers import link, buttons, menu, groups
-from services import instagram_auth
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -34,9 +33,6 @@ async def main() -> None:
     dp.include_router(menu.router)    # Menu должно быть до link, чтобы перехватить кнопки
     dp.include_router(buttons.router) # Callback buttons
     dp.include_router(link.router)    # Обработка ссылок /start /help
-
-    # Инициализация Instagram авторизации
-    instagram_auth.init_instagram_auth()
 
     logger.info("Bot starting (long polling)...")
 

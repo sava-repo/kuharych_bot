@@ -35,11 +35,8 @@ WHITELIST_CHAT_IDS: list[int] = [
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
-# Instagram авторизация (для автоматического получения cookies)
-INSTAGRAM_USERNAME: str = os.getenv("INSTAGRAM_USERNAME", "")
-INSTAGRAM_PASSWORD: str = os.getenv("INSTAGRAM_PASSWORD", "")
+# Instagram cookies (Netscape format, экспорт из браузера — см. COOKIES_GUIDE.md)
 INSTAGRAM_COOKIES_FILE: str = os.getenv("INSTAGRAM_COOKIES_FILE", "data/instagram_cookies.txt")
-INSTAGRAM_SESSION_FILE: str = os.getenv("INSTAGRAM_SESSION_FILE", "data/instagram_session")
 
 # Limits
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты

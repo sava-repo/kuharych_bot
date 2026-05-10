@@ -1,14 +1,12 @@
 """Скачивание видео через yt-dlp + извлечение описания"""
 
 import logging
-import os
 import tempfile
 from pathlib import Path
 
 import yt_dlp
 
 import config
-import services.instagram_auth as instagram_auth
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,45 @@ TEMP_DIR = Path(tempfile.gettempdir()) / "recipe-bot"
 
 def _ensure_temp_dir() -> None:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _validate_cookies_file(filepath: Path) -> bool:
+    """
+    Проверяет, что cookie-файл валиден:
+    - Существует и не пустой
+    - Формат Netscape (первая строка содержит заголовок)
+    - Содержит sessionid
+    """
+    if not filepath.exists() or filepath.stat().st_size == 0:
+        return False
+
+    try:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+        lines = content.strip().splitlines()
+
+        if not lines:
+            return False
+
+        # Проверяем Netscape-заголовок
+        first_line = lines[0].lower()
+        if "netscape" not in first_line:
+            logger.warning(
+                "Cookies file is not in Netscape format. "
+                "Expected header: '# Netscape HTTP Cookie File'"
+            )
+            return False
+
+        # Проверяем наличие sessionid
+        has_sessionid = any("sessionid" in line.lower() for line in lines)
+        if not has_sessionid:
+            logger.warning("Cookies file does not contain 'sessionid' cookie")
+            return False
+
+        return True
+
+    except Exception as e:
+        logger.warning(f"Failed to validate cookies file: {e}")
+        return False
 
 
 def download_video(url: str, message_id: int) -> tuple[str, str | None]:
@@ -37,25 +74,24 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
         "no_warnings": True,
     }
 
-    # Cookies для Instagram (обход rate-limit)
+    # Cookies для Instagram
     is_instagram = "instagram.com" in url
     cookies_file = Path(config.INSTAGRAM_COOKIES_FILE)
 
-    if is_instagram:
-        # Авто-обновление cookies при необходимости
-        try:
-            instagram_auth.refresh_cookies_if_needed()
-        except Exception as e:
-            logger.warning(f"Failed to refresh Instagram cookies: {e}")
-
-    if cookies_file.exists():
-        ydl_opts["cookiefile"] = str(cookies_file)
-        logger.info(f"Using cookies from: {cookies_file}")
+    if is_instagram and cookies_file.exists():
+        if _validate_cookies_file(cookies_file):
+            ydl_opts["cookiefile"] = str(cookies_file)
+            logger.info(f"Using cookies from: {cookies_file}")
+        else:
+            logger.warning(
+                "Cookies file exists but is invalid. "
+                "Export fresh cookies from browser — see COOKIES_GUIDE.md"
+            )
     elif is_instagram:
         logger.warning(
             "Instagram cookies file not found. "
             "Some videos may be unavailable. "
-            "See COOKIES_GUIDE.md for manual cookie export instructions."
+            "See COOKIES_GUIDE.md for cookie export instructions."
         )
 
     def _do_download(opts: dict) -> tuple[str, str | None]:
@@ -85,26 +121,18 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
             return str(output_path), caption
 
     try:
-        try:
-            return _do_download(ydl_opts)
-        except yt_dlp.utils.DownloadError as e:
-            # Если скачали с cookies и упали — пробуем без cookies
-            if "cookiefile" in ydl_opts:
-                logger.warning(f"Download with cookies failed, retrying without cookies: {e}")
-                fallback_opts = {k: v for k, v in ydl_opts.items() if k != "cookiefile"}
-                try:
-                    return _do_download(fallback_opts)
-                except yt_dlp.utils.DownloadError:
-                    pass  # пробросим оригинальную ошибку ниже
-            raise
-
+        return _do_download(ydl_opts)
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
         logger.error(f"Download error: {e}")
-        if "login required" in error_msg.lower() or "rate-limit" in error_msg.lower():
+        if is_instagram and (
+            "login required" in error_msg.lower()
+            or "rate-limit" in error_msg.lower()
+            or "HTTP Error 403" in error_msg
+        ):
             raise RuntimeError(
                 "Не удалось скачать видео: Instagram требует авторизацию. "
-                "Экспортируйте cookies из браузера (см. COOKIES_GUIDE.md) "
+                "Экспортируйте свежие cookies из браузера (см. COOKIES_GUIDE.md) "
                 "и поместите в data/instagram_cookies.txt"
             ) from e
         raise RuntimeError(f"Не удалось скачать видео: {e}") from e
@@ -112,6 +140,8 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
 
 def cleanup_file(filepath: str) -> None:
     """Удаляет временный файл"""
+    import os
+
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
