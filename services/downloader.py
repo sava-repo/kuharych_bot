@@ -207,8 +207,7 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
                     f"kkclip: {kkclip_err})"
                 ) from e
 
-        raise RuntimeError(f"Не удалось скачать видео: {e}") from e
-
+        raise
 
 def cleanup_file(filepath: str) -> None:
     """Удаляет временный файл"""
