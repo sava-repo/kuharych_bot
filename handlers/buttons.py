@@ -248,9 +248,7 @@ async def handle_recat(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("mov:"))
 async def handle_move(callback: CallbackQuery) -> None:
-    """Перемещение рецепта в другую категорию"""
-    user_id = callback.from_user.id
-    group_id = gm.get_user_active_group(user_id)
+    """Перемещение рецепта в другую категорию (единая категория для всех групп)"""
     parts = callback.data.split(":")
     if len(parts) != 4:
         await callback.answer("Ошибка данных", show_alert=True)
@@ -269,8 +267,14 @@ async def handle_move(callback: CallbackQuery) -> None:
     await callback.answer(f"Перемещаю в «{new_category}»...")
 
     try:
-        # Читаем текущий рецепт
+        # Читаем текущий рецепт из GitHub
         content = await gramax.get_recipe_content(old_category, f"{slug}.md")
+
+        # Обновляем category в YAML frontmatter markdown-файла
+        content = content.replace(
+            f"category: {old_category}",
+            f"category: {new_category}",
+        )
 
         # Удаляем из старой категории в GitHub
         await gramax.delete_recipe(old_category, slug)
@@ -296,12 +300,16 @@ async def handle_move(callback: CallbackQuery) -> None:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"GitHub API error: {resp.status_code}")
 
-        # Обновляем связи в группе
-        gm.remove_recipe_from_group(group_id, old_category, slug)
-        gm.add_recipe_to_group(group_id, new_category, slug)
+        # Обновляем категорию во ВСЕХ группах
+        gm.move_recipe_category(old_category, slug, new_category)
+
+        # Обновляем source_index
+        source_url = gm.find_source_by_slug(old_category, slug)
+        if source_url:
+            gm.register_source(source_url, new_category, slug)
 
         # Обновляем кэш
-        config._callback_cache[rk] = {"category": new_category, "slug": slug, "group_id": group_id}
+        config._callback_cache[rk] = {"category": new_category, "slug": slug}
 
         await callback.message.edit_text(
             f"✅ Рецепт «{slug}» перемещён в «{new_category}»",

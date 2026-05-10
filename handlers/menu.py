@@ -69,6 +69,38 @@ def _format_recipe_from_markdown(md_content: str) -> str:
     return text
 
 
+async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str] | None:
+    """
+    Пытается получить случайный рецепт из категории.
+    Если файл в GitHub не найден (404) — удаляет «мёртвую» запись и пробует другой.
+    Возвращает (slug, content) или None.
+    """
+    group_slugs = gm.get_group_recipes_by_category(group_id, category)
+
+    if not group_slugs:
+        return None
+
+    # Перемешиваем, чтобы не зациклиться на одном мёртвом рецепте
+    random.shuffle(group_slugs)
+
+    for slug in group_slugs:
+        filename = f"{slug}.md"
+        try:
+            content = await gramax.get_recipe_content(category, filename)
+            return slug, content
+        except Exception as e:
+            err_str = str(e)
+            if "404" in err_str:
+                # Рецепт удалён из GitHub — убираем из группы
+                logger.warning(f"Stale recipe {category}/{slug} not found in GitHub, removing from group {group_id}")
+                gm.remove_recipe_from_group(group_id, category, slug)
+                continue
+            # Другая ошибка — пробрасываем
+            raise
+
+    return None
+
+
 @router.message(F.text.in_(["🌅 Завтрак", "🍽 Основное блюдо", "🍰 Десерт"]))
 async def handle_menu_category(message: Message) -> None:
     """Обработка нажатия кнопки меню — случайный рецепт из категории"""
@@ -78,10 +110,9 @@ async def handle_menu_category(message: Message) -> None:
     if not category:
         return
 
-    # Получаем рецепты только из текущей группы
-    group_slugs = gm.get_group_recipes_by_category(group_id, category)
+    result = await _try_get_random_recipe(group_id, category)
 
-    if not group_slugs:
+    if not result:
         group = gm.get_group(group_id)
         group_name = group.name if group else "Неизвестная"
         await message.answer(
@@ -90,16 +121,7 @@ async def handle_menu_category(message: Message) -> None:
         )
         return
 
-    # Выбираем случайный рецепт из группы
-    slug = random.choice(group_slugs)
-    filename = f"{slug}.md"
-
-    try:
-        content = await gramax.get_recipe_content(category, filename)
-    except Exception as e:
-        logger.error(f"Get recipe error: {e}", exc_info=True)
-        await message.answer("❌ Не удалось загрузить рецепт. Попробуйте позже")
-        return
+    slug, content = result
 
     formatted = _format_recipe_from_markdown(content)
 
@@ -140,24 +162,15 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     await callback.answer("Выбираю другой рецепт...")
 
-    # Получаем рецепты только из текущей группы
-    group_slugs = gm.get_group_recipes_by_category(group_id, category)
+    result = await _try_get_random_recipe(group_id, category)
 
-    if not group_slugs:
+    if not result:
         await callback.message.edit_text(
             f"📭 Пока нет рецептов в категории «{category}»"
         )
         return
 
-    slug = random.choice(group_slugs)
-    filename = f"{slug}.md"
-
-    try:
-        content = await gramax.get_recipe_content(category, filename)
-    except Exception as e:
-        logger.error(f"Get recipe error: {e}", exc_info=True)
-        await callback.message.edit_text("❌ Не удалось загрузить рецепт")
-        return
+    slug, content = result
 
     formatted = _format_recipe_from_markdown(content)
 

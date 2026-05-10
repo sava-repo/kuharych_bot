@@ -480,6 +480,29 @@ def register_source(source_url: str, category: str, slug: str) -> None:
         )
 
 
+def move_recipe_category(old_category: str, slug: str, new_category: str) -> int:
+    """Обновляет категорию рецепта во ВСЕХ группах. Возвращает кол-во обновлённых записей."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE group_recipes SET category = ? WHERE category = ? AND slug = ?",
+            (new_category, old_category, slug),
+        )
+        updated = cursor.rowcount
+        if updated:
+            logger.info(f"Moved recipe {slug}: {old_category} -> {new_category} in {updated} group(s)")
+        return updated
+
+
+def find_source_by_slug(category: str, slug: str) -> str | None:
+    """Находит source_url по категории и slug."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT source_url FROM source_index WHERE category = ? AND slug = ?",
+            (category, slug),
+        ).fetchone()
+        return row["source_url"] if row else None
+
+
 def unregister_source(source_url: str) -> None:
     """Удаляет связь source URL → рецепт."""
     with _connect() as conn:
