@@ -51,9 +51,16 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
     if cookies_file.exists():
         ydl_opts["cookiefile"] = str(cookies_file)
         logger.info(f"Using cookies from: {cookies_file}")
+    elif is_instagram:
+        logger.warning(
+            "Instagram cookies file not found. "
+            "Some videos may be unavailable. "
+            "See COOKIES_GUIDE.md for manual cookie export instructions."
+        )
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def _do_download(opts: dict) -> tuple[str, str | None]:
+        """Внутренняя функция скачивания с заданными опциями."""
+        with yt_dlp.YoutubeDL(opts) as ydl:
             logger.info(f"Extracting info: {url}")
             info = ydl.extract_info(url, download=False)
 
@@ -77,8 +84,29 @@ def download_video(url: str, message_id: int) -> tuple[str, str | None]:
             logger.info(f"Video saved: {output_path}")
             return str(output_path), caption
 
+    try:
+        try:
+            return _do_download(ydl_opts)
+        except yt_dlp.utils.DownloadError as e:
+            # Если скачали с cookies и упали — пробуем без cookies
+            if "cookiefile" in ydl_opts:
+                logger.warning(f"Download with cookies failed, retrying without cookies: {e}")
+                fallback_opts = {k: v for k, v in ydl_opts.items() if k != "cookiefile"}
+                try:
+                    return _do_download(fallback_opts)
+                except yt_dlp.utils.DownloadError:
+                    pass  # пробросим оригинальную ошибку ниже
+            raise
+
     except yt_dlp.utils.DownloadError as e:
+        error_msg = str(e)
         logger.error(f"Download error: {e}")
+        if "login required" in error_msg.lower() or "rate-limit" in error_msg.lower():
+            raise RuntimeError(
+                "Не удалось скачать видео: Instagram требует авторизацию. "
+                "Экспортируйте cookies из браузера (см. COOKIES_GUIDE.md) "
+                "и поместите в data/instagram_cookies.txt"
+            ) from e
         raise RuntimeError(f"Не удалось скачать видео: {e}") from e
 
 

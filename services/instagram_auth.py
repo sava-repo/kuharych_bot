@@ -77,23 +77,43 @@ def login_and_save_cookies() -> bool:
 
     except instaloader.exceptions.TwoFactorAuthRequiredException:
         logger.warning("Instagram requires 2FA — manual intervention needed")
-        raise RuntimeError(
-            "Instagram требует двухфакторную аутентификацию. "
-            "Пожалуйста, войдите вручную через браузер и экспортируйте cookies, "
-            "или отключите 2FA для аккаунта бота."
+        logger.warning(
+            "Экспортируйте cookies вручную из браузера. "
+            "См. COOKIES_GUIDE.md для инструкций."
         )
+        return False
 
     except instaloader.exceptions.BadCredentialsException:
         logger.error("Instagram bad credentials")
-        raise RuntimeError("Неверные данные для входа в Instagram. Проверьте INSTAGRAM_USERNAME и INSTAGRAM_PASSWORD")
+        logger.warning("Проверьте INSTAGRAM_USERNAME и INSTAGRAM_PASSWORD в .env")
+        return False
 
     except instaloader.exceptions.ConnectionException as e:
+        error_msg = str(e)
+        if "Checkpoint required" in error_msg or "checkpoint" in error_msg.lower():
+            logger.warning(
+                "Instagram требует верификацию (checkpoint). "
+                "Автоматический вход невозможен. "
+                "Экспортируйте cookies вручную из браузера — см. COOKIES_GUIDE.md"
+            )
+            return False
         logger.error(f"Instagram connection error: {e}")
-        raise RuntimeError(f"Не удалось подключиться к Instagram: {e}")
+        return False
+
+    except instaloader.exceptions.LoginException as e:
+        error_msg = str(e)
+        if "Checkpoint" in error_msg or "checkpoint" in error_msg.lower():
+            logger.warning(
+                "Instagram checkpoint required — автоматический вход заблокирован. "
+                "Экспортируйте cookies вручную из браузера — см. COOKIES_GUIDE.md"
+            )
+            return False
+        logger.error(f"Instagram login error: {e}", exc_info=True)
+        return False
 
     except Exception as e:
         logger.error(f"Instagram login error: {e}", exc_info=True)
-        raise RuntimeError(f"Ошибка авторизации Instagram: {e}")
+        return False
 
 
 def _load_existing_session() -> bool:
