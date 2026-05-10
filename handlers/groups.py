@@ -116,7 +116,7 @@ async def handle_grp_list(callback: CallbackQuery) -> None:
     )
 
 
-@router.callback_query(F.data.startswith("grp:") and ~F.data.startswith("grp_:"))
+@router.callback_query(F.data.startswith("grp:") & ~F.data.startswith("grp_:"))
 async def handle_grp_select(callback: CallbackQuery) -> None:
     """Показывает детали группы"""
     group_id = callback.data.split(":", 1)[1]
