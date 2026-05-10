@@ -45,10 +45,10 @@ def extract_audio(video_path: str) -> str:
 
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr}")
+        # Видео без аудиодорожки
+        if "does not contain any stream" in result.stderr:
+            raise RuntimeError("Не удалось распознать речь: видео не содержит аудиодорожку")
         raise RuntimeError(f"ffmpeg failed: {result.stderr[:200]}")
-
-    if not os.path.exists(wav_path):
-        raise RuntimeError("ffmpeg не создал WAV файл")
 
     logger.info(f"Audio extracted: {wav_path}")
     return wav_path
