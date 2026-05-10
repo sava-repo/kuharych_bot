@@ -38,6 +38,9 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 # Instagram cookies (Netscape format, экспорт из браузера — см. COOKIES_GUIDE.md)
 INSTAGRAM_COOKIES_FILE: str = os.getenv("INSTAGRAM_COOKIES_FILE", "data/instagram_cookies.txt")
 
+# Database
+DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/bot.db")
+
 # Limits
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты
 MIN_TRANSCRIPTION_WORDS: int = 10

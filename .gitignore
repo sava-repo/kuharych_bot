@@ -1,2 +1,4 @@
 COOKIES_GUIDE.md
 data/instagram_cookies.txt
+data/*.db
+data/*.json
