@@ -51,18 +51,22 @@ def _cat_code(category: str) -> str:
     return config.CATEGORY_TO_CODE.get(category, "o")
 
 
-def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
+def _recipe_keyboard(category: str, slug: str, url: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
     rk = _cache_recipe(category, slug)
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
     builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
-    builder.adjust(2)
+    if url:
+        builder.button(text="▶️ Открыть Reels", url=url)
+        builder.adjust(2, 1)
+    else:
+        builder.adjust(2)
     return builder.as_markup()
 
 
-def _duplicate_keyboard(category: str, slug: str, sha: str) -> InlineKeyboardMarkup:
+def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура при обнаружении дубликата"""
     rk = _cache_recipe(category, slug)
     # Сохраняем SHA отдельно в тот же ключ
@@ -77,7 +81,11 @@ def _duplicate_keyboard(category: str, slug: str, sha: str) -> InlineKeyboardMar
         text="📝 Сохранить как новый",
         callback_data=f"sn:{cc}:{rk}",
     )
-    builder.adjust(2)
+    if url:
+        builder.button(text="▶️ Открыть Reels", url=url)
+        builder.adjust(2, 1)
+    else:
+        builder.adjust(2)
     return builder.as_markup()
 
 
@@ -139,7 +147,7 @@ async def handle_link(message: Message) -> None:
             await processing_msg.edit_text(f"❌ Произошла ошибка. Попробуйте позже")
         return
 
-    recipe, duplicate_info = result
+    recipe, duplicate_info, source_url = result
 
     if duplicate_info:
         # Дубликат — предлагаем выбор
@@ -148,14 +156,14 @@ async def handle_link(message: Message) -> None:
             f"{recipe.format_message()}\n\n"
             f"Что делаем?",
             reply_markup=_duplicate_keyboard(
-                recipe.category, recipe.slug, duplicate_info["sha"]
+                recipe.category, recipe.slug, duplicate_info["sha"], source_url
             ),
         )
     else:
         # Успешно сохранено
         await processing_msg.edit_text(
             f"✅ Рецепт сохранён!\n\n{recipe.format_message()}",
-            reply_markup=_recipe_keyboard(recipe.category, recipe.slug),
+            reply_markup=_recipe_keyboard(recipe.category, recipe.slug, source_url),
         )
 
 
@@ -164,7 +172,7 @@ async def _process_video(
 ) -> tuple:
     """
     Полный пайплайн обработки видео.
-    Возвращает (Recipe, duplicate_info | None)
+    Возвращает (Recipe, duplicate_info | None, source_url)
     """
     video_path: str | None = None
 
@@ -189,12 +197,12 @@ async def _process_video(
         duplicate = await gramax.check_duplicate(recipe.category, recipe.slug)
 
         if duplicate:
-            return recipe, duplicate
+            return recipe, duplicate, url
 
         # 5. Сохранение
         await gramax.save_recipe(recipe)
 
-        return recipe, None
+        return recipe, None, url
 
     finally:
         # Удаляем временные файлы
