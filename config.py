@@ -44,6 +44,7 @@ DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/data/bot.db")
 # Limits
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты
 MIN_TRANSCRIPTION_WORDS: int = 10
+MIN_CAPTION_WORDS: int = 15  # минимум слов в описании для fallback (когда нет речи)
 PROCESSING_TIMEOUT_SEC: int = 120
 
 # Короткие коды категорий для callback_data (лимит 64 байта)

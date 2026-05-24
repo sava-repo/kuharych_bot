@@ -19,8 +19,14 @@ def _load_system_prompt() -> str:
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def _build_user_prompt(transcription: str, caption: str | None) -> str:
+def _build_user_prompt(transcription: str | None, caption: str | None) -> str:
     caption_text = caption if caption else "(нет описания)"
+    if transcription is None:
+        # Fallback: речь не распознана — извлекаем рецепт только из описания
+        return (
+            f"(Транскрибация видео недоступна — речь не распознана)\n\n"
+            f"Рецепт из описания под видео:\n{caption_text}"
+        )
     return (
         f"Транскрибация видео:\n{transcription}\n\n"
         f"Описание под видео:\n{caption_text}"
@@ -167,14 +173,15 @@ class RecipeParseError(Exception):
     pass
 
 
-async def generate_recipe(transcription: str, caption: str | None, source: str) -> Recipe:
+async def generate_recipe(transcription: str | None, caption: str | None, source: str) -> Recipe:
     """
     Отправляет транскрибацию в GLM-5 и возвращает структурированный рецепт.
     """
     system_prompt = _load_system_prompt()
     user_prompt = _build_user_prompt(transcription, caption)
 
-    logger.info(f"Sending to GLM-5: transcription={len(transcription)} chars, caption={bool(caption)}")
+    t_len = f"{len(transcription)} chars" if transcription else "None (caption fallback)"
+    logger.info(f"Sending to GLM-5: transcription={t_len}, caption={bool(caption)}")
 
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         response = await client.post(

@@ -207,10 +207,18 @@ async def _process_video(
         # 2. Транскрибация (ffmpeg sync + Groq async)
         transcription = await transcriber.transcribe(video_path)
 
-        # Проверяем минимальную длину
+        # Проверяем минимальную длину транскрипции
         word_count = len(transcription.split())
         if word_count < config.MIN_TRANSCRIPTION_WORDS:
-            raise RuntimeError("Не удалось распознать речь в видео")
+            # Если речь не распознана — пробуем извлечь рецепт из описания
+            if caption and len(caption.split()) >= config.MIN_CAPTION_WORDS:
+                logger.info(
+                    f"Speech too short ({word_count} words), "
+                    f"falling back to caption ({len(caption.split())} words)"
+                )
+                transcription = None  # сигнализируем recipe_parser
+            else:
+                raise RuntimeError("Не удалось распознать речь в видео")
 
         # 3. Генерация рецепта
         recipe = await recipe_parser.generate_recipe(transcription, caption, url)
