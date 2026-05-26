@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from services import downloader, transcriber, recipe_parser, gramax
+from services import downloader, transcriber, recipe_parser, gramax, lobstr
 from services.recipe_parser import NotARecipeError, RecipeParseError
 import services.group_manager as gm
 from handlers.menu import MENU_KEYBOARD
@@ -199,10 +199,23 @@ async def _process_video(
             recipe = _parse_recipe_from_markdown(content, category, url)
             return recipe, None, url, False
 
-        # 1. Скачивание (sync yt-dlp — запускаем в отдельном потоке)
-        video_path, caption = await asyncio.to_thread(
-            downloader.download_video, url, message_id
+        # 1. Параллельно: скачиваем видео + получаем caption через Lobstr.io
+        lobstr_task = asyncio.create_task(lobstr.get_reel_caption(url))
+        download_task = asyncio.create_task(
+            asyncio.to_thread(downloader.download_video, url, message_id)
         )
+
+        # Ждём завершения обоих
+        lobstr_caption, (video_path, ytdlp_caption) = await asyncio.gather(
+            lobstr_task, download_task
+        )
+
+        # Lobstr caption — основной, yt-dlp — fallback
+        caption = lobstr_caption or ytdlp_caption
+        if lobstr_caption:
+            logger.info("Using Lobstr.io caption as primary source")
+        elif ytdlp_caption:
+            logger.info("Lobstr caption unavailable, using yt-dlp caption as fallback")
 
         # 2. Транскрибация (ffmpeg sync + Groq async)
         transcription = await transcriber.transcribe(video_path)

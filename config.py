@@ -35,6 +35,9 @@ WHITELIST_CHAT_IDS: list[int] = [
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+# Lobstr.io API (основной источник caption для Instagram Reels)
+LOBSTR_API_KEY: str = os.getenv("LOBSTR_API_KEY", "")
+
 # Instagram cookies (Netscape format, экспорт из браузера — см. COOKIES_GUIDE.md)
 INSTAGRAM_COOKIES_FILE: str = os.getenv("INSTAGRAM_COOKIES_FILE", "data/instagram_cookies.txt")
 
