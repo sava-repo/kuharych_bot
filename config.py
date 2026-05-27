@@ -57,6 +57,3 @@ CATEGORY_TO_CODE: dict[str, str] = {
     "десерт": "d",
 }
 CODE_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_TO_CODE.items()}
-
-# In-memory кэш для SHA и данных дубликатов (key -> data)
-_callback_cache: dict[str, dict] = {}

@@ -2,3 +2,6 @@ COOKIES_GUIDE.md
 data/instagram_cookies.txt
 data/*.db
 data/*.json
+.cline/memory-bank/decomposition.md
+.cline/memory-bank/spec-verify.md
+.cline/memory-bank/status-definitions.md

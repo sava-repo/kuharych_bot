@@ -175,10 +175,13 @@ async def overwrite_recipe(recipe: Recipe, sha: str) -> str:
     return filepath
 
 
-async def save_recipe_as_new(recipe: Recipe, suffix: int = 2) -> str:
+async def save_recipe_as_new(recipe: Recipe, suffix: int = 2) -> tuple[str, int]:
     """
     Сохраняет рецепт с новым slug (добавляет суффикс -2, -3 и т.д.)
+    Возвращает (filepath, final_suffix)
     """
+    from dataclasses import replace
+    
     base_slug = recipe.slug
     new_slug = f"{base_slug}-{suffix}"
 
@@ -187,13 +190,10 @@ async def save_recipe_as_new(recipe: Recipe, suffix: int = 2) -> str:
     if existing:
         return await save_recipe_as_new(recipe, suffix + 1)
 
-    # Создаём новый рецепт с обновлённым slug (меняем title для нового slug)
-    original_title = recipe.title
-    recipe.title = f"{original_title} ({suffix})"
-    try:
-        return await save_recipe(recipe)
-    finally:
-        recipe.title = original_title
+    # Создаём копию рецепта с новым title (без мутации оригинала)
+    new_recipe = replace(recipe, title=f"{recipe.title} ({suffix})")
+    filepath = await save_recipe(new_recipe)
+    return filepath, suffix
 
 
 async def delete_recipe(category: str, slug: str) -> None:

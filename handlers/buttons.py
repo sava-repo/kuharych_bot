@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config
 import services.gramax as gramax
 import services.group_manager as gm
+import services.cache as cache
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def _cat(code: str) -> str:
 
 def _resolve(rk: str) -> dict | None:
     """Получает данные рецепта из кэша по ключу"""
-    return config._callback_cache.get(rk)
+    return cache.get(rk)
 
 
 def _recipe_kb(category: str, rk: str) -> dict:
@@ -95,63 +96,7 @@ async def handle_delete(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("ow:"))
 async def handle_overwrite(callback: CallbackQuery) -> None:
-    """Перезапись существующего рецепта"""
-    user_id = callback.from_user.id
-    parts = callback.data.split(":")
-    if len(parts) != 3:
-        await callback.answer("Ошибка данных", show_alert=True)
-        return
-
-    _, cc, rk = parts
-    cached = _resolve(rk)
-    if not cached:
-        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
-        return
-
-    category = cached["category"]
-    slug = cached["slug"]
-    sha = cached.get("sha")
-    if not sha:
-        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
-        return
-
-    await callback.answer("Перезаписываю...")
-
-    try:
-        # Читаем текущий рецепт
-        content = await gramax.get_recipe_content(category, f"{slug}.md")
-        content_b64 = base64.b64encode(content.encode("utf-8")).decode()
-
-        filepath = f"receipts/{category}/{slug}.md"
-        url = gramax._api_url(filepath)
-
-        resp = await gramax._github_request(
-            "PUT",
-            url,
-            json={
-                "message": f"Overwrite recipe: {slug}",
-                "content": content_b64,
-                "sha": sha,
-            },
-        )
-
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub API error: {resp.status_code}")
-
-        await callback.message.edit_text(
-            f"✅ Рецепт «{slug}» перезаписан",
-            reply_markup=_recipe_kb(category, rk),
-        )
-        logger.info(f"Recipe overwritten via button: {category}/{slug}")
-
-    except Exception as e:
-        logger.error(f"Overwrite error: {e}", exc_info=True)
-        await callback.message.edit_text("❌ Не удалось перезаписать рецепт. Попробуйте позже")
-
-
-@router.callback_query(F.data.startswith("sn:"))
-async def handle_save_new(callback: CallbackQuery) -> None:
-    """Сохранение рецепта с новым названием"""
+    """Перезапись существующего рецепта новым содержимым"""
     user_id = callback.from_user.id
     group_id = gm.get_user_active_group(user_id)
     parts = callback.data.split(":")
@@ -165,47 +110,89 @@ async def handle_save_new(callback: CallbackQuery) -> None:
         await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
         return
 
-    category = cached["category"]
-    slug = cached["slug"]
+    recipe = cached.get("recipe")
+    if not recipe:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    sha = cached.get("sha")
+    if not sha:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    await callback.answer("Перезаписываю...")
+
+    try:
+        # Перезаписываем новым рецептом
+        await gramax.overwrite_recipe(recipe, sha)
+        
+        # Обновляем кэш с новым sha
+        # Получаем новый sha из GitHub
+        duplicate_info = await gramax.check_duplicate(recipe.category, recipe.slug)
+        if duplicate_info:
+            cache.update(rk, {
+                "category": recipe.category,
+                "slug": recipe.slug,
+                "sha": duplicate_info["sha"],
+                "recipe": recipe,
+                "group_id": group_id,
+            })
+
+        await callback.message.edit_text(
+            f"✅ Рецепт «{recipe.title}» перезаписан",
+            reply_markup=_recipe_kb(recipe.category, rk),
+        )
+        logger.info(f"Recipe overwritten via button: {recipe.category}/{recipe.slug}")
+
+    except Exception as e:
+        logger.error(f"Overwrite error: {e}", exc_info=True)
+        await callback.message.edit_text("❌ Не удалось перезаписать рецепт. Попробуйте позже")
+
+
+@router.callback_query(F.data.startswith("sn:"))
+async def handle_save_new(callback: CallbackQuery) -> None:
+    """Сохранение рецепта с новым названием (копия)"""
+    user_id = callback.from_user.id
+    group_id = gm.get_user_active_group(user_id)
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    _, cc, rk = parts
+    cached = _resolve(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
+
+    recipe = cached.get("recipe")
+    if not recipe:
+        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
+        return
 
     await callback.answer("Сохраняю как новый...")
 
     try:
-        # Читаем текущий рецепт
-        content = await gramax.get_recipe_content(category, f"{slug}.md")
-
-        # Создаём новый файл с суффиксом -2
-        new_slug = f"{slug}-2"
-        new_filename = f"{new_slug}.md"
-        content_b64 = base64.b64encode(content.encode("utf-8")).decode()
-
-        filepath = f"receipts/{category}/{new_filename}"
-        url = gramax._api_url(filepath)
-
-        resp = await gramax._github_request(
-            "PUT",
-            url,
-            json={
-                "message": f"Add recipe (copy): {new_slug}",
-                "content": content_b64,
-            },
-        )
-
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub API error: {resp.status_code}")
+        # Сохраняем копию рецепта с инкрементальным суффиксом
+        filepath, suffix = await gramax.save_recipe_as_new(recipe)
+        new_slug = f"{recipe.slug}-{suffix}"
 
         # Добавляем новый рецепт в группу
-        gm.add_recipe_to_group(group_id, category, new_slug)
+        gm.add_recipe_to_group(group_id, recipe.category, new_slug)
 
-        # Кэшируем новый slug
-        new_rk = f"r{len(config._callback_cache)}"
-        config._callback_cache[new_rk] = {"category": category, "slug": new_slug, "group_id": group_id}
+        # Кэшируем данные нового рецепта
+        new_rk = cache.put({
+            "category": recipe.category,
+            "slug": new_slug,
+            "group_id": group_id,
+            "recipe": None  # Для сохранённой копии рецепт в кэше не нужен
+        })
 
         await callback.message.edit_text(
             f"✅ Рецепт сохранён как «{new_slug}»",
-            reply_markup=_recipe_kb(category, new_rk),
+            reply_markup=_recipe_kb(recipe.category, new_rk),
         )
-        logger.info(f"Recipe saved as new via button: {category}/{new_slug}")
+        logger.info(f"Recipe saved as new via button: {recipe.category}/{new_slug}")
 
     except Exception as e:
         logger.error(f"Save new error: {e}", exc_info=True)
@@ -309,7 +296,7 @@ async def handle_move(callback: CallbackQuery) -> None:
             gm.register_source(source_url, new_category, slug)
 
         # Обновляем кэш
-        config._callback_cache[rk] = {"category": new_category, "slug": slug}
+        cache.update(rk, {"category": new_category, "slug": slug, "group_id": cached.get("group_id")})
 
         await callback.message.edit_text(
             f"✅ Рецепт «{slug}» перемещён в «{new_category}»",

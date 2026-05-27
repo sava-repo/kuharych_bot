@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from services import downloader, transcriber, recipe_parser, gramax, lobstr
+from services import downloader, transcriber, recipe_parser, gramax, lobstr, cache
 from services.recipe_parser import NotARecipeError, RecipeParseError
 import services.group_manager as gm
 from handlers.menu import MENU_KEYBOARD
@@ -34,19 +34,6 @@ def _extract_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
-# Счётчик для генерации коротких ключей кэша
-_cache_counter = 0
-
-
-def _cache_recipe(category: str, slug: str) -> str:
-    """Сохраняет рецепт в кэш, возвращает короткий ключ (r0, r1, ...)"""
-    global _cache_counter
-    key = f"r{_cache_counter}"
-    _cache_counter += 1
-    config._callback_cache[key] = {"category": category, "slug": slug}
-    return key
-
-
 def _cat_code(category: str) -> str:
     """Короткий код категории для callback_data"""
     return config.CATEGORY_TO_CODE.get(category, "o")
@@ -54,7 +41,7 @@ def _cat_code(category: str) -> str:
 
 def _recipe_keyboard(category: str, slug: str, url: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
-    rk = _cache_recipe(category, slug)
+    rk = cache.put({"category": category, "slug": slug})
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
@@ -67,11 +54,23 @@ def _recipe_keyboard(category: str, slug: str, url: str | None = None) -> Inline
     return builder.as_markup()
 
 
-def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = None) -> InlineKeyboardMarkup:
-    """Клавиатура при обнаружении дубликата"""
-    rk = _cache_recipe(category, slug)
-    # Сохраняем SHA отдельно в тот же ключ
-    config._callback_cache[rk]["sha"] = sha
+def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = None, recipe: object = None) -> InlineKeyboardMarkup:
+    """Клавиатура при обнаружении дубликата
+    
+    Args:
+        category: категория рецепта
+        slug: slug рецепта
+        sha: SHA файла в GitHub
+        url: исходная ссылка на видео (опционально)
+        recipe: полный объект Recipe (для кнопки "Перезаписать")
+    """
+    # Сохраняем полный рецепт + sha в кэш
+    rk = cache.put({
+        "category": category, 
+        "slug": slug, 
+        "sha": sha,
+        "recipe": recipe
+    })
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(
@@ -156,7 +155,7 @@ async def handle_link(message: Message) -> None:
             f"{recipe.format_message()}\n\n"
             f"Что делаем?",
             reply_markup=_duplicate_keyboard(
-                recipe.category, recipe.slug, duplicate_info["sha"], source_url
+                recipe.category, recipe.slug, duplicate_info["sha"], source_url, recipe
             ),
         )
     else:

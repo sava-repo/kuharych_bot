@@ -167,9 +167,9 @@ def _ensure_user(user_id: int) -> User:
         if row:
             return User(user_id=user_id, active_group=row["active_group"])
 
-        # Новый пользователь — создаём личную группу
+        # Новый пользователь — создаём личную группу в той же транзакции
         personal_group_id = f"pers_{user_id}"
-        _create_group(personal_group_id, "Личные рецепты", user_id, members=[user_id])
+        _create_group_with_conn(conn, personal_group_id, "Личные рецепты", user_id, members=[user_id])
 
         conn.execute(
             "INSERT INTO users (user_id, active_group) VALUES (?, ?)",
@@ -189,12 +189,20 @@ def get_user_active_group(user_id: int) -> str:
 def set_user_active_group(user_id: int, group_id: str) -> bool:
     """Переключает активную группу пользователя."""
     with _connect() as conn:
-        # Убедимся что пользователь существует
+        # Проверяем что пользователь существует
         row = conn.execute(
             "SELECT active_group FROM users WHERE user_id = ?", (user_id,)
         ).fetchone()
+        
+        # Если пользователя нет — создаём в той же транзакции
         if not row:
-            _ensure_user(user_id)
+            personal_group_id = f"pers_{user_id}"
+            _create_group_with_conn(conn, personal_group_id, "Личные рецепты", user_id, members=[user_id])
+            conn.execute(
+                "INSERT INTO users (user_id, active_group) VALUES (?, ?)",
+                (user_id, personal_group_id),
+            )
+            logger.info(f"Created user {user_id} during group switch")
 
         # Проверяем что группа существует и пользователь в ней
         group_row = conn.execute(
@@ -220,22 +228,27 @@ def set_user_active_group(user_id: int, group_id: str) -> bool:
 
 # ── Группы ────────────────────────────────────────────────────────────
 
-def _create_group(group_id: str, name: str, owner_id: int, members: list[int] | None = None) -> Group:
-    """Создаёт группу (низкоуровневая, без проверок)."""
+def _create_group_with_conn(conn: sqlite3.Connection, group_id: str, name: str, owner_id: int, members: list[int] | None = None) -> Group:
+    """Создаёт группу с использованием существующего соединения (для транзакций)."""
     members = members or [owner_id]
 
-    with _connect() as conn:
+    conn.execute(
+        "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
+        (group_id, name, owner_id),
+    )
+    for mid in members:
         conn.execute(
-            "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
-            (group_id, name, owner_id),
+            "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
+            (group_id, mid),
         )
-        for mid in members:
-            conn.execute(
-                "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
-                (group_id, mid),
-            )
 
     return Group(group_id=group_id, name=name, owner_id=owner_id, members=members)
+
+
+def _create_group(group_id: str, name: str, owner_id: int, members: list[int] | None = None) -> Group:
+    """Создаёт группу (низкоуровневая, без проверок)."""
+    with _connect() as conn:
+        return _create_group_with_conn(conn, group_id, name, owner_id, members)
 
 
 def create_custom_group(name: str, owner_id: int) -> Group:

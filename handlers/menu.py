@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 import config
 import services.gramax as gramax
 import services.group_manager as gm
+import services.cache as cache
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +127,7 @@ async def handle_menu_category(message: Message) -> None:
     formatted = _format_recipe_from_markdown(content)
 
     # Добавляем inline-кнопки
-    rk = f"r{len(config._callback_cache)}"
-    config._callback_cache[rk] = {"category": category, "slug": slug, "group_id": group_id}
+    rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
 
     cc = config.CATEGORY_TO_CODE.get(category, "o")
     builder = InlineKeyboardBuilder()
@@ -174,8 +174,7 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     formatted = _format_recipe_from_markdown(content)
 
-    rk = f"r{len(config._callback_cache)}"
-    config._callback_cache[rk] = {"category": category, "slug": slug, "group_id": group_id}
+    rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
 
     builder = InlineKeyboardBuilder()
     builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
