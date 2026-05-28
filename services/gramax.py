@@ -260,6 +260,8 @@ async def get_recipe_content(category: str, filename: str) -> str:
 
     if resp.status_code != 200:
         logger.error(f"GitHub API get error: {resp.status_code} {resp.text}")
+        if resp.status_code == 404:
+            raise RecipeNotFoundError(f"Рецепт не найден: {resp.status_code}")
         raise RuntimeError(f"Ошибка чтения рецепта: {resp.status_code}")
 
     data = resp.json()

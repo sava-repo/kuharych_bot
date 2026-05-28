@@ -3,7 +3,7 @@
 import logging
 import random
 
-from aiogram import Router, F
+from aiogram import Router, F, State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
@@ -18,12 +18,17 @@ router = Router()
 
 VALID_CATEGORIES = ["завтрак", "основное блюдо", "десерт"]
 
+
+class SearchState(StatesGroup):
+    waiting_for_ingredient = State()
+
 # Кнопки меню всегда видны внизу чата
 MENU_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🌅 Завтрак")],
         [KeyboardButton(text="🍽 Основное блюдо")],
         [KeyboardButton(text="🍰 Десерт")],
+        [KeyboardButton(text="🔍 Поиск")],
         [KeyboardButton(text="👥 Мои группы")],
     ],
     resize_keyboard=True,
@@ -73,7 +78,7 @@ def _format_recipe_from_markdown(md_content: str) -> str:
 async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str] | None:
     """
     Пытается получить случайный рецепт из категории.
-    Если файл в GitHub не найден (404) — удаляет «мёртвую» запись и пробует другой.
+    Если файл в GitHub не найден (404) — пропускает «мёртвую» запись и пробует другой.
     Возвращает (slug, content) или None.
     """
     group_slugs = gm.get_group_recipes_by_category(group_id, category)
@@ -89,13 +94,40 @@ async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str
         try:
             content = await gramax.get_recipe_content(category, filename)
             return slug, content
-        except Exception as e:
-            err_str = str(e)
-            if "404" in err_str:
-                # Рецепт удалён из GitHub — убираем из группы
-                logger.warning(f"Stale recipe {category}/{slug} not found in GitHub, removing from group {group_id}")
-                gm.remove_recipe_from_group(group_id, category, slug)
-                continue
+        except gramax.RecipeNotFoundError:
+            # Рецепт удалён из GitHub — пропускаем без удаления
+            logger.warning(f"Stale recipe {category}/{slug} not found in GitHub, skipping")
+            continue
+        except Exception:
+            # Другая ошибка — пробрасываем
+            raise
+
+    return None
+
+
+async def _try_get_recipe_from_slugs(
+    slugs: list[str], category: str, group_id: str
+) -> tuple[str, str] | None:
+    """
+    Пытается получить рецепт из списка slugs.
+    Если файл в GitHub не найден (404) — пропускает и пробует следующий.
+    Возвращает (slug, content) или None.
+    """
+    if not slugs:
+        return None
+
+    # Перемешиваем для случайного выбора
+    random.shuffle(slugs)
+
+    for slug in slugs:
+        try:
+            content = await gramax.get_recipe_content(category, f"{slug}.md")
+            return slug, content
+        except gramax.RecipeNotFoundError:
+            # Рецепт удалён из GitHub — пропускаем
+            logger.warning(f"Stale recipe {category}/{slug} not found in GitHub, skipping")
+            continue
+        except Exception:
             # Другая ошибка — пробрасываем
             raise
 
@@ -188,5 +220,156 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     await callback.message.edit_text(
         f"🎲 Случайный рецепт:\n\n{formatted}",
+        reply_markup=builder.as_markup(),
+    )
+
+
+# ── Поиск по ингредиенту ────────────────────────────────────────────────
+
+@router.message(F.text == "🔍 Поиск")
+async def handle_search_start(message: Message) -> None:
+    """Начало поиска по ингредиенту"""
+    await message.answer("🔎 Введите ингредиент для поиска:")
+    await message.set_state(SearchState.waiting_for_ingredient)
+
+
+@router.message(SearchState.waiting_for_ingredient)
+async def handle_search_ingredient(message: Message) -> None:
+    """Обработка ввод ингредиента"""
+    ingredient = message.text.strip()
+    if not ingredient:
+        await message.answer("Пожалуйста, введите ингредиент:")
+        return
+
+    user_id = message.from_user.id
+    group_id = gm.get_user_active_group(user_id)
+    
+    # Сбрасываем FSM
+    await message.clear_state()
+    
+    # Кэшируем данные
+    cache_key = cache.put({"ingredient": ingredient, "group_id": group_id})
+    
+    # Показываем inline-клавиатуру с категориями
+    builder = InlineKeyboardBuilder()
+    for cat in VALID_CATEGORIES:
+        cc = config.CATEGORY_TO_CODE.get(cat, "o")
+        builder.button(text=cat.capitalize(), callback_data=f"srch:{cc}:{cache_key}")
+    builder.adjust(1)
+    
+    await message.answer(
+        f"🔎 Выберите категорию для поиска «{ingredient}»:",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("srch:"))
+async def handle_search_category(callback: CallbackQuery) -> None:
+    """Выполнение поиска по выбранной категории"""
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    
+    _, cc, cache_key = parts
+    cached = cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Попробуйте снова")
+        return
+    
+    ingredient = cached["ingredient"]
+    group_id = cached["group_id"]
+    category = config.CODE_TO_CATEGORY.get(cc, "основное блюдо")
+    
+    await callback.answer(f"Ищу {ingredient}...")
+    
+    # Выполняем поиск
+    slugs = gm.search_recipes_by_ingredient(group_id, ingredient, category)
+    
+    if not slugs:
+        await callback.message.edit_text(
+            f"📭 Рецептов с ингредиентом «{ingredient}» в категории «{category}» не найдено"
+        )
+        return
+    
+    # Пытаемся получить рецепт (с пропуском удалённых)
+    result = await _try_get_recipe_from_slugs(slugs, category, group_id)
+    
+    if not result:
+        await callback.message.edit_text(
+            f"📭 Не удалось загрузить рецепты с ингредиентом «{ingredient}» в категории «{category}»"
+        )
+        return
+    
+    slug, content = result
+    formatted = _format_recipe_from_markdown(content)
+    
+    # Кэшируем данные для кнопок
+    rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="🎲 Другой рецепт", callback_data=f"srnd:{cc}:{cache_key}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
+    builder.adjust(2, 1)
+    
+    await callback.message.edit_text(
+        f"🔎 Результат поиска «{ingredient}»:\n\n{formatted}",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("srnd:"))
+async def handle_search_random(callback: CallbackQuery) -> None:
+    """Другой результат поиска"""
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    
+    _, cc, cache_key = parts
+    cached = cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Попробуйте снова")
+        return
+    
+    ingredient = cached["ingredient"]
+    group_id = cached["group_id"]
+    category = config.CODE_TO_CATEGORY.get(cc, "основное блюдо")
+    
+    await callback.answer("Выбираю другой рецепт...")
+    
+    # Выполняем поиск
+    slugs = gm.search_recipes_by_ingredient(group_id, ingredient, category)
+    
+    if not slugs:
+        await callback.message.edit_text(
+            f"📭 Рецептов с ингредиентом «{ingredient}» в категории «{category}» не найдено"
+        )
+        return
+    
+    # Пытаемся получить рецепт (с пропуском удалённых)
+    result = await _try_get_recipe_from_slugs(slugs, category, group_id)
+    
+    if not result:
+        await callback.message.edit_text(
+            f"📭 Не удалось загрузить рецепты с ингредиентом «{ingredient}» в категории «{category}»"
+        )
+        return
+    
+    slug, content = result
+    formatted = _format_recipe_from_markdown(content)
+    
+    # Кэшируем данные для кнопок
+    rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="🎲 Другой рецепт", callback_data=f"srnd:{cc}:{cache_key}")
+    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
+    builder.adjust(2, 1)
+    
+    await callback.message.edit_text(
+        f"🔎 Результат поиска «{ingredient}»:\n\n{formatted}",
         reply_markup=builder.as_markup(),
     )

@@ -82,6 +82,8 @@ async def handle_delete(callback: CallbackQuery) -> None:
         if not gm.recipe_exists_in_any_group(category, slug):
             try:
                 await gramax.delete_recipe(category, slug)
+                # Удаляем ингредиенты из индекса
+                gm.remove_recipe_ingredients(category, slug)
                 logger.info(f"Recipe fully deleted from GitHub: {category}/{slug}")
             except Exception as e:
                 logger.warning(f"Failed to delete from GitHub (non-critical): {e}")
@@ -125,6 +127,10 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
     try:
         # Перезаписываем новым рецептом
         await gramax.overwrite_recipe(recipe, sha)
+        
+        # Реиндексируем ингредиенты
+        gm.remove_recipe_ingredients(recipe.category, recipe.slug)
+        gm.index_recipe_ingredients(recipe.category, recipe.slug, recipe.ingredients)
         
         # Обновляем кэш с новым sha
         # Получаем новый sha из GitHub
@@ -179,6 +185,9 @@ async def handle_save_new(callback: CallbackQuery) -> None:
 
         # Добавляем новый рецепт в группу
         gm.add_recipe_to_group(group_id, recipe.category, new_slug)
+
+        # Индексируем ингредиенты
+        gm.index_recipe_ingredients(recipe.category, new_slug, recipe.ingredients)
 
         # Кэшируем данные нового рецепта
         new_rk = cache.put({
@@ -255,7 +264,12 @@ async def handle_move(callback: CallbackQuery) -> None:
 
     try:
         # Читаем текущий рецепт из GitHub
-        content = await gramax.get_recipe_content(old_category, f"{slug}.md")
+        try:
+            content = await gramax.get_recipe_content(old_category, f"{slug}.md")
+        except gramax.RecipeNotFoundError:
+            # Рецепт удалён из GitHub
+            await callback.message.edit_text("⚠️ Рецепт не найден. Возможно, он был удалён.")
+            return
 
         # Обновляем category в YAML frontmatter markdown-файла
         content = content.replace(
@@ -304,6 +318,9 @@ async def handle_move(callback: CallbackQuery) -> None:
         )
         logger.info(f"Recipe moved: {old_category}/{slug} -> {new_category}/{slug}")
 
+    except gramax.RecipeNotFoundError:
+        # Рецепт удалён из GitHub
+        await callback.message.edit_text("⚠️ Рецепт не найден. Возможно, он был удалён.")
     except Exception as e:
         logger.error(f"Move error: {e}", exc_info=True)
         await callback.message.edit_text("❌ Не удалось переместить рецепт. Попробуйте позже")

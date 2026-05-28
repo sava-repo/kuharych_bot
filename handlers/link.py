@@ -184,19 +184,23 @@ async def _process_video(
             category = existing["category"]
             slug = existing["slug"]
 
-            # Проверяем, есть ли уже в этой группе
-            group_slugs = gm.get_group_recipes_by_category(group_id, category)
-            if slug in group_slugs:
-                # Рецепт уже в группе — загружаем и показываем
+            try:
+                # Проверяем, есть ли уже в этой группе
+                group_slugs = gm.get_group_recipes_by_category(group_id, category)
+                if slug in group_slugs:
+                    # Рецепт уже в группе — загружаем и показываем
+                    content = await gramax.get_recipe_content(category, f"{slug}.md")
+                    recipe = _parse_recipe_from_markdown(content, category, url)
+                    return recipe, None, url, False
+
+                # Добавляем существующий рецепт в группу
+                gm.add_recipe_to_group(group_id, category, slug)
                 content = await gramax.get_recipe_content(category, f"{slug}.md")
                 recipe = _parse_recipe_from_markdown(content, category, url)
                 return recipe, None, url, False
-
-            # Добавляем существующий рецепт в группу
-            gm.add_recipe_to_group(group_id, category, slug)
-            content = await gramax.get_recipe_content(category, f"{slug}.md")
-            recipe = _parse_recipe_from_markdown(content, category, url)
-            return recipe, None, url, False
+            except gramax.RecipeNotFoundError:
+                # Рецепт удалён из GitHub
+                raise RuntimeError("⚠️ Рецепт по этой ссылке больше не доступен. Отправьте ссылку заново для повторного сохранения")
 
         # 1. Параллельно: скачиваем видео + получаем caption через Lobstr.io
         lobstr_task = asyncio.create_task(lobstr.get_reel_caption(url))
@@ -250,6 +254,9 @@ async def _process_video(
         # 6. Регистрируем source URL и добавляем в группу
         gm.register_source(url, recipe.category, recipe.slug)
         gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
+        
+        # 7. Индексируем ингредиенты для поиска
+        gm.index_recipe_ingredients(recipe.category, recipe.slug, recipe.ingredients)
 
         return recipe, None, url, True
 

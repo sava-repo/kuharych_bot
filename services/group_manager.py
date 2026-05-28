@@ -67,6 +67,13 @@ def _init_db() -> None:
                 category TEXT NOT NULL,
                 slug TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS recipe_ingredients (
+                category TEXT NOT NULL,
+                slug TEXT NOT NULL,
+                ingredient TEXT NOT NULL,
+                PRIMARY KEY (category, slug, ingredient)
+            );
         """)
     _migrate_from_json()
 
@@ -502,6 +509,11 @@ def move_recipe_category(old_category: str, slug: str, new_category: str) -> int
         )
         updated = cursor.rowcount
         if updated:
+            # Обновляем категорию в индексе ингредиентов
+            conn.execute(
+                "UPDATE recipe_ingredients SET category = ? WHERE category = ? AND slug = ?",
+                (new_category, old_category, slug),
+            )
             logger.info(f"Moved recipe {slug}: {old_category} -> {new_category} in {updated} group(s)")
         return updated
 
@@ -523,3 +535,48 @@ def unregister_source(source_url: str) -> None:
             "DELETE FROM source_index WHERE source_url = ?",
             (source_url,),
         )
+
+
+# ── Индекс ингредиентов для поиска ─────────────────────────────────────
+
+def index_recipe_ingredients(category: str, slug: str, ingredients: list[str]) -> None:
+    """Индексирует ингредиенты рецепта для поиска."""
+    with _connect() as conn:
+        # Сначала удаляем старые ингредиенты (если есть)
+        conn.execute(
+            "DELETE FROM recipe_ingredients WHERE category = ? AND slug = ?",
+            (category, slug),
+        )
+        # Добавляем новые
+        for ing in ingredients:
+            conn.execute(
+                "INSERT INTO recipe_ingredients (category, slug, ingredient) VALUES (?, ?, ?)",
+                (category, slug, ing),
+            )
+        logger.debug(f"Indexed {len(ingredients)} ingredients for {category}/{slug}")
+
+
+def remove_recipe_ingredients(category: str, slug: str) -> None:
+    """Удаляет все ингредиенты рецепта из индекса."""
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM recipe_ingredients WHERE category = ? AND slug = ?",
+            (category, slug),
+        )
+        logger.debug(f"Removed ingredients index for {category}/{slug}")
+
+
+def search_recipes_by_ingredient(group_id: str, query: str, category: str) -> list[str]:
+    """Ищет рецепты по ингредиенту в группе и категории. Возвращает список slugs."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT ri.slug
+               FROM recipe_ingredients ri
+               INNER JOIN group_recipes gr
+                   ON gr.category = ri.category AND gr.slug = ri.slug
+               WHERE ri.ingredient LIKE ?
+                 AND gr.group_id = ?
+                 AND ri.category = ?""",
+            (f"%{query}%", group_id, category),
+        ).fetchall()
+        return [r["slug"] for r in rows]
