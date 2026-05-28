@@ -141,3 +141,78 @@ kuharych_bot/
        → SQLite (индексирование)
 ```
 
+## Тестирование
+
+### Локальное тестирование (Unit тесты)
+
+Запуск unit тестов локально (без API ключей):
+
+```bash
+# Все unit тесты
+pytest tests/unit/
+
+# Конкретный файл
+pytest tests/unit/test_lobstr.py
+
+# С выводом
+pytest tests/unit/ -v
+```
+
+Unit тесты используют моки и не требуют API ключей.
+
+### Тестирование на сервере (Integration тесты)
+
+Запуск всех тестов (включая integration) на сервере:
+
+```bash
+# Через Telegram (только для админов)
+/run_tests              # Все тесты
+/run_tests unit         # Только unit тесты
+/run_tests lobstr       # Lobstr API тесты
+/run_tests pipeline     # End-to-end пайплайн
+/run_tests transcriber  # Транскрибация
+
+# Через командную строку
+TESTING_ENV=server pytest tests/
+TESTING_ENV=server pytest tests/integration/test_lobstr_live.py
+```
+
+Integration тесты:
+- Требуют API ключей (`LOBSTR_API_KEY`, `GROQ_API_KEY`, `GLM_API_KEY`)
+- Запускаются только при `TESTING_ENV=server`
+- Пропускаются локально автоматически
+- Отправляют результаты в Telegram как файл
+
+### Структура тестов
+
+```
+tests/
+├── unit/                          # Unit тесты (моки, быстрые)
+│   ├── test_models.py            # Recipe, Group модели
+│   ├── test_lobstr.py            # Валидация URL
+│   ├── test_parser.py            # Парсинг рецептов
+│   └── test_downloader.py        # Загрузка видео
+├── integration/                   # Integration тесты (реальные API)
+│   ├── test_lobstr_live.py       # Lobstr API
+│   ├── test_pipeline.py          # End-to-end пайплайн
+│   └── test_transcriber_live.py  # Groq транскрибация
+└── fixtures/                      # Тестовые данные
+    └── README.md                 # Инструкция для test_audio.mp3
+```
+
+### Окружение тестирования
+
+Переменная `TESTING_ENV` управляет поведением тестов:
+
+- `local` (по умолчанию): Unit тесты, integration тесты пропускаются
+- `server`: Все тесты, integration тесты с реальными API
+
+### Админские команды
+
+Команда `/run_tests` доступна только администраторам (настраивается через `ADMIN_IDS` в `.env`).
+
+**Требуемые переменные окружения:**
+- `ADMIN_IDS`: Список ID администраторов через запятую
+- `TESTING_ENV`: `local` или `server` (по умолчанию `local`)
+ +++++++ REPLACE
+

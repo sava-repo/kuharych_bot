@@ -35,6 +35,17 @@ WHITELIST_CHAT_IDS: list[int] = [
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+# Admin access for test commands
+ADMIN_IDS: list[int] = [
+    int(uid.strip())
+    for uid in os.getenv("ADMIN_IDS", "").split(",")
+    if uid.strip().isdigit()
+]
+
+# Testing environment (local or server)
+TESTING_ENV: str = os.getenv("TESTING_ENV", "local")
+ +++++++ REPLACE
+
 # Lobstr.io API (основной источник caption для Instagram Reels)
 LOBSTR_API_KEY: str = os.getenv("LOBSTR_API_KEY", "")
 
