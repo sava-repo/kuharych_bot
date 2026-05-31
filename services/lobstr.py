@@ -112,26 +112,34 @@ async def _wait_for_run(client: httpx.AsyncClient, run_id: str) -> None:
     raise TimeoutError(f"Lobstr run {run_id} didn't finish in {RUN_TIMEOUT}s")
 
 
-async def _get_caption(client: httpx.AsyncClient, squid_id: str, reel_url: str) -> str | None:
-    """Получить caption из результатов, отфильтровав по запрошенному URL."""
+async def _get_caption(client: httpx.AsyncClient, run_id: str, reel_url: str) -> str | None:
+    """Получить caption из результатов конкретного run, отфильтровав по запрошенному URL."""
     resp = await client.get(
         f"{API_BASE}/results",
         headers=_headers(),
-        params={"squid": squid_id, "limit": 10, "page": 1},
+        params={"run": run_id, "limit": 10, "page": 1},
     )
     resp.raise_for_status()
     data = resp.json().get("data", [])
-    logger.info(f"Lobstr: _get_caption got {len(data)} results for squid {squid_id}, looking for {reel_url}")
+    logger.info(f"Lobstr: _get_caption got {len(data)} results for run {run_id}, looking for {reel_url}")
 
     for row in data:
         result_url = row.get("url") or row.get("input_url") or ""
+        if not result_url:
+            logger.debug(f"Lobstr: skipping result with no url (row id={row.get('id', '?')})")
+            continue
         # Сравниваем без query-параметров (наши URL тоже очищены)
-        if result_url and _clean_url(result_url) != _clean_url(reel_url):
+        if _clean_url(result_url) != _clean_url(reel_url):
             logger.debug(f"Lobstr: skipping result with url={result_url} (mismatch)")
             continue
         caption = row.get("caption")
         if caption:
+            logger.info(f"Lobstr: matched caption for url={result_url} ({len(caption)} chars)")
             return caption.strip()
+        else:
+            logger.debug(f"Lobstr: matched url={result_url} but caption is empty")
+
+    logger.warning(f"Lobstr: no matching result found for {reel_url} among {len(data)} results")
     return None
 
 
@@ -170,7 +178,7 @@ async def get_reel_caption(url: str) -> str | None:
             await _add_task(client, squid_id, cleaned_url)
             run_id = await _start_run(client, squid_id)
             await _wait_for_run(client, run_id)
-            caption = await _get_caption(client, squid_id, cleaned_url)
+            caption = await _get_caption(client, run_id, cleaned_url)
 
             if caption:
                 logger.info(f"Lobstr: got caption ({len(caption)} chars)")

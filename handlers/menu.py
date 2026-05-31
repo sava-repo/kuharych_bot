@@ -3,7 +3,8 @@
 import logging
 import random
 
-from aiogram import Router, F, State, StatesGroup
+from aiogram import Router, F
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 

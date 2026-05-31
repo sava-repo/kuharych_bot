@@ -1,4 +1,5 @@
 """Admin handler for running automated tests"""
+import asyncio
 import logging
 import os
 
@@ -63,8 +64,9 @@ async def handle_run_tests(message: Message) -> None:
     await message.answer(f"🧪 Запускаю {test_type_str}, подождите...\n\n⏱️ Это может занять несколько минут...")
     
     try:
-        # Запускаем тесты (на сервере всегда TESTING_ENV=server)
-        result, log_file_path = await test_runner.run_pytest(
+        # Запускаем тесты в отдельном потоке (subprocess — синхронный)
+        result, log_file_path = await asyncio.to_thread(
+            test_runner.run_pytest,
             test_type=test_type,
             env="server",
             timeout=300,  # 5 минут

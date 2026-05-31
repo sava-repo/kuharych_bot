@@ -45,7 +45,7 @@ class TestRecipeSlug:
         recipe = Recipe(
             title="Борщ №1",
             ingredients=["Свекла", "Капуста"],
-            steps ["Варить"],
+            steps=["Варить"],
             category="основное блюдо",
             source="instagram"
         )

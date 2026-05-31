@@ -9,7 +9,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
 from handlers import link, buttons, menu, groups, testing
- +++++++ REPLACE
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -33,9 +32,8 @@ async def main() -> None:
     dp.include_router(groups.router)  # Группы (FSM states)
     dp.include_router(menu.router)    # Menu должно быть до link, чтобы перехватить кнопки
     dp.include_router(buttons.router) # Callback buttons
-    dp.include_router(link.router)    # Обработка ссылок /start /help
-    dp.include_router(testing.router) # Testing commands (/run_tests)
- +++++++ REPLACE
+    dp.include_router(testing.router) # Testing commands (/run_tests) — до link!
+    dp.include_router(link.router)    # Обработка ссылок /start /help (catch-all F.text)
 
     logger.info("Bot starting (long polling)...")
 

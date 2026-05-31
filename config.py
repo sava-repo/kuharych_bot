@@ -44,7 +44,6 @@ ADMIN_IDS: list[int] = [
 
 # Testing environment (local or server)
 TESTING_ENV: str = os.getenv("TESTING_ENV", "local")
- +++++++ REPLACE
 
 # Lobstr.io API (основной источник caption для Instagram Reels)
 LOBSTR_API_KEY: str = os.getenv("LOBSTR_API_KEY", "")
