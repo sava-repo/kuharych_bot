@@ -12,6 +12,7 @@ import config
 import services.gramax as gramax
 import services.group_manager as gm
 import services.cache as cache
+import services.rotation as rotation
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,9 @@ def _format_recipe_from_markdown(md_content: str) -> str:
     return text
 
 
-async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str] | None:
+async def _try_get_random_recipe(
+    group_id: str, category: str, *, exclude: list[str] | None = None
+) -> tuple[str, str] | None:
     """
     Пытается получить случайный рецепт из категории.
     Если файл в GitHub не найден (404) — пропускает «мёртвую» запись и пробует другой.
@@ -86,6 +89,15 @@ async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str
 
     if not group_slugs:
         return None
+
+    # Фильтруем исключённые из rotation рецепты
+    if exclude:
+        exclude_set = set(exclude)
+        filtered = [s for s in group_slugs if s not in exclude_set]
+        if filtered:
+            group_slugs = filtered
+        # Если после фильтрации ничего не осталось — используем полный список
+        # (все рецепты показаны, начинаем новый цикл)
 
     # Перемешиваем, чтобы не зациклиться на одном мёртвом рецепте
     random.shuffle(group_slugs)
@@ -107,7 +119,7 @@ async def _try_get_random_recipe(group_id: str, category: str) -> tuple[str, str
 
 
 async def _try_get_recipe_from_slugs(
-    slugs: list[str], category: str, group_id: str
+    slugs: list[str], category: str, group_id: str, *, exclude: list[str] | None = None
 ) -> tuple[str, str] | None:
     """
     Пытается получить рецепт из списка slugs.
@@ -116,6 +128,14 @@ async def _try_get_recipe_from_slugs(
     """
     if not slugs:
         return None
+
+    # Фильтруем исключённые из rotation рецепты
+    if exclude:
+        exclude_set = set(exclude)
+        filtered = [s for s in slugs if s not in exclude_set]
+        if filtered:
+            slugs = filtered
+        # Если после фильтрации ничего не осталось — используем полный список
 
     # Перемешиваем для случайного выбора
     random.shuffle(slugs)
@@ -144,7 +164,10 @@ async def handle_menu_category(message: Message) -> None:
     if not category:
         return
 
-    result = await _try_get_random_recipe(group_id, category)
+    # Получаем список исключённых из rotation
+    excluded = rotation.get_excluded(user_id, category)
+
+    result = await _try_get_random_recipe(group_id, category, exclude=excluded)
 
     if not result:
         group = gm.get_group(group_id)
@@ -156,6 +179,10 @@ async def handle_menu_category(message: Message) -> None:
         return
 
     slug, content = result
+
+    # Добавляем показанный рецепт в rotation
+    total_count = len(gm.get_group_recipes_by_category(group_id, category))
+    rotation.add(user_id, category, slug, total_count)
 
     formatted = _format_recipe_from_markdown(content)
 
@@ -201,7 +228,10 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     await callback.answer("Выбираю другой рецепт...")
 
-    result = await _try_get_random_recipe(group_id, category)
+    # Получаем список исключённых из rotation
+    excluded = rotation.get_excluded(user_id, category)
+
+    result = await _try_get_random_recipe(group_id, category, exclude=excluded)
 
     if not result:
         await callback.message.edit_text(
@@ -210,6 +240,10 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
         return
 
     slug, content = result
+
+    # Добавляем показанный рецепт в rotation
+    total_count = len(gm.get_group_recipes_by_category(group_id, category))
+    rotation.add(user_id, category, slug, total_count)
 
     formatted = _format_recipe_from_markdown(content)
 
@@ -293,6 +327,7 @@ async def handle_search_category(callback: CallbackQuery) -> None:
     ingredient = cached["ingredient"]
     group_id = cached["group_id"]
     category = config.CODE_TO_CATEGORY.get(cc, "основное блюдо")
+    user_id = callback.from_user.id
     
     await callback.answer(f"Ищу {ingredient}...")
     
@@ -304,9 +339,12 @@ async def handle_search_category(callback: CallbackQuery) -> None:
             f"📭 Рецептов с ингредиентом «{ingredient}» в категории «{category}» не найдено"
         )
         return
+
+    # Получаем список исключённых из rotation
+    excluded = rotation.get_excluded(user_id, category)
     
     # Пытаемся получить рецепт (с пропуском удалённых)
-    result = await _try_get_recipe_from_slugs(slugs, category, group_id)
+    result = await _try_get_recipe_from_slugs(slugs, category, group_id, exclude=excluded)
     
     if not result:
         await callback.message.edit_text(
@@ -315,6 +353,10 @@ async def handle_search_category(callback: CallbackQuery) -> None:
         return
     
     slug, content = result
+
+    # Добавляем показанный рецепт в rotation
+    rotation.add(user_id, category, slug, len(slugs))
+
     formatted = _format_recipe_from_markdown(content)
     
     # Кэшируем данные для кнопок
@@ -349,6 +391,7 @@ async def handle_search_random(callback: CallbackQuery) -> None:
     ingredient = cached["ingredient"]
     group_id = cached["group_id"]
     category = config.CODE_TO_CATEGORY.get(cc, "основное блюдо")
+    user_id = callback.from_user.id
     
     await callback.answer("Выбираю другой рецепт...")
     
@@ -360,9 +403,12 @@ async def handle_search_random(callback: CallbackQuery) -> None:
             f"📭 Рецептов с ингредиентом «{ingredient}» в категории «{category}» не найдено"
         )
         return
+
+    # Получаем список исключённых из rotation
+    excluded = rotation.get_excluded(user_id, category)
     
     # Пытаемся получить рецепт (с пропуском удалённых)
-    result = await _try_get_recipe_from_slugs(slugs, category, group_id)
+    result = await _try_get_recipe_from_slugs(slugs, category, group_id, exclude=excluded)
     
     if not result:
         await callback.message.edit_text(
@@ -371,6 +417,10 @@ async def handle_search_random(callback: CallbackQuery) -> None:
         return
     
     slug, content = result
+
+    # Добавляем показанный рецепт в rotation
+    rotation.add(user_id, category, slug, len(slugs))
+
     formatted = _format_recipe_from_markdown(content)
     
     # Кэшируем данные для кнопок
