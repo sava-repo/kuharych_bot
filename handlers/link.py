@@ -11,7 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 
 import config
-from services import downloader, transcriber, recipe_parser, gramax, lobstr, cache
+from services import hiker, transcriber, recipe_parser, gramax, cache
 from services.recipe_parser import NotARecipeError, RecipeParseError
 import services.group_manager as gm
 from handlers.menu import MENU_KEYBOARD
@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# Regex для валидации ссылок
+# Regex для валидации ссылок (только Instagram)
 URL_PATTERN = re.compile(
     r"https?://(www\.)?(m\.)?"
-    r"(instagram\.com|tiktok\.com|youtube\.com|youtu\.be)"
+    r"instagram\.com"
     r"/\S+",
     re.IGNORECASE,
 )
@@ -114,7 +114,7 @@ async def cmd_start(message: Message) -> None:
     """Обработка /start и /help"""
     await message.answer(
         "👋 Привет! Я бот для сохранения рецептов из Reels.\n\n"
-        "Отправь мне ссылку на Instagram Reels, TikTok или YouTube Shorts — "
+        "Отправь мне ссылку на Instagram Reels — "
         "и я извлеку рецепт из видео.\n\n"
         "Используй кнопки меню внизу, чтобы получить случайный рецепт по категории.",
         reply_markup=MENU_KEYBOARD,
@@ -128,7 +128,7 @@ async def handle_link(message: Message) -> None:
     url = _extract_url(message.text or "")
     if not url:
         await message.answer(
-            "🔗 Отправьте ссылку на Instagram Reels, TikTok или YouTube Shorts"
+            "🔗 Отправьте ссылку на Instagram Reels"
         )
         return
 
@@ -228,23 +228,12 @@ async def _process_video(
                 logger.warning(f"Recipe {category}/{slug} not found in GitHub, unregistering source {url}")
                 gm.unregister_source(url)
 
-        # 1. Параллельно: скачиваем видео + получаем caption через Lobstr.io
-        lobstr_task = asyncio.create_task(lobstr.get_reel_caption(url))
-        download_task = asyncio.create_task(
-            asyncio.to_thread(downloader.download_video, url, message_id)
-        )
-
-        # Ждём завершения обоих
-        lobstr_caption, (video_path, ytdlp_caption) = await asyncio.gather(
-            lobstr_task, download_task
-        )
-
-        # Lobstr caption — основной, yt-dlp — fallback
-        caption = lobstr_caption or ytdlp_caption
-        if lobstr_caption:
-            logger.info("Using Lobstr.io caption as primary source")
-        elif ytdlp_caption:
-            logger.info("Lobstr caption unavailable, using yt-dlp caption as fallback")
+        # 1. Скачиваем видео и получаем caption через HikerAPI
+        video_path, caption = await hiker.download_reel(url, message_id)
+        if caption:
+            logger.info(f"Using HikerAPI caption ({len(caption)} chars)")
+        else:
+            logger.info("HikerAPI: no caption available")
 
         # 2. Транскрибация (ffmpeg sync + Groq async)
         transcription = await transcriber.transcribe(video_path)
@@ -289,7 +278,7 @@ async def _process_video(
     finally:
         # Удаляем временные файлы
         if video_path:
-            downloader.cleanup_file(video_path)
+            hiker.cleanup_file(video_path)
 
 
 def _parse_recipe_from_markdown(md_content: str, category: str, source: str):

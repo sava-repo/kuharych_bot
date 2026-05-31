@@ -45,11 +45,8 @@ ADMIN_IDS: list[int] = [
 # Testing environment (local or server)
 TESTING_ENV: str = os.getenv("TESTING_ENV", "local")
 
-# Lobstr.io API (основной источник caption для Instagram Reels)
-LOBSTR_API_KEY: str = os.getenv("LOBSTR_API_KEY", "")
-
-# Instagram cookies (Netscape format, экспорт из браузера — см. COOKIES_GUIDE.md)
-INSTAGRAM_COOKIES_FILE: str = os.getenv("INSTAGRAM_COOKIES_FILE", "data/instagram_cookies.txt")
+# HikerAPI (скачивание Instagram Reels + получение описания)
+HIKER_API_KEY: str = os.getenv("HIKER_API_KEY", "")
 
 # Database
 DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/data/bot.db")
