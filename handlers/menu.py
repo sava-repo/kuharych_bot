@@ -5,6 +5,7 @@ import random
 
 from aiogram import Router, F
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
@@ -30,8 +31,7 @@ MENU_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton(text="🌅 Завтрак")],
         [KeyboardButton(text="🍽 Основное блюдо")],
         [KeyboardButton(text="🍰 Десерт")],
-        [KeyboardButton(text="🔍 Поиск")],
-        [KeyboardButton(text="👥 Мои группы")],
+        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="👥 Группы")],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
@@ -266,14 +266,14 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 # ── Поиск по ингредиенту ────────────────────────────────────────────────
 
 @router.message(F.text == "🔍 Поиск")
-async def handle_search_start(message: Message) -> None:
+async def handle_search_start(message: Message, state: FSMContext) -> None:
     """Начало поиска по ингредиенту"""
     await message.answer("🔎 Введите ингредиент для поиска:")
-    await message.set_state(SearchState.waiting_for_ingredient)
+    await state.set_state(SearchState.waiting_for_ingredient)
 
 
 @router.message(SearchState.waiting_for_ingredient)
-async def handle_search_ingredient(message: Message) -> None:
+async def handle_search_ingredient(message: Message, state: FSMContext) -> None:
     """Обработка ввод ингредиента"""
     ingredient = message.text.strip()
     if not ingredient:
@@ -284,7 +284,7 @@ async def handle_search_ingredient(message: Message) -> None:
     group_id = gm.get_user_active_group(user_id)
     
     # Сбрасываем FSM
-    await message.clear_state()
+    await state.clear()
     
     # Кэшируем данные
     cache_key = cache.put({"ingredient": ingredient, "group_id": group_id})

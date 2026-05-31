@@ -71,9 +71,9 @@ def _group_detail_keyboard(group_id: str, user_id: int) -> dict:
     return builder.as_markup()
 
 
-# ── Кнопка меню «Мои группы» ────────────────────────────────────────
+# ── Кнопка меню «Группы» ────────────────────────────────────────────
 
-@router.message(F.text == "👥 Мои группы")
+@router.message(F.text == "👥 Группы")
 async def handle_my_groups(message: Message) -> None:
     """Показывает список групп пользователя"""
     user_id = message.from_user.id
