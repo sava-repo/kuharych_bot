@@ -38,8 +38,8 @@ def _recipe_kb(category: str, rk: str) -> dict:
     """Клавиатура под рецептом — возвращает InlineKeyboardMarkup"""
     cc = _cc(category)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
     builder.adjust(2)
     return builder.as_markup()
 

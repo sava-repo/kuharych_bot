@@ -191,20 +191,16 @@ async def handle_menu_category(message: Message) -> None:
 
     cc = config.CATEGORY_TO_CODE.get(category, "o")
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
-    builder.button(
-        text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
-    )
-    builder.button(
-        text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
-    )
-    # Ищем source URL для кнопки "Открыть Reels"
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
+    # Ищем source URL для кнопки "Посмотреть"
     source_url = gm.find_source_by_slug(category, slug)
     if source_url:
-        builder.button(text="▶️ Открыть Reels", url=source_url)
-        builder.adjust(2, 2)
+        builder.button(text="▶️ Посмотреть", url=source_url)
+        builder.adjust(3, 1)
     else:
         builder.adjust(2, 1)
+    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
 
     await message.answer(
         f"🎲 Случайный рецепт:\n\n{formatted}",
@@ -250,20 +246,16 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
     rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
-    builder.button(
-        text="🎲 Другой рецепт", callback_data=f"rnd:{cc}"
-    )
-    builder.button(
-        text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
-    )
-    # Ищем source URL для кнопки "Открыть Reels"
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
+    # Ищем source URL для кнопки "Посмотреть"
     source_url = gm.find_source_by_slug(category, slug)
     if source_url:
-        builder.button(text="▶️ Открыть рилс", url=source_url)
-        builder.adjust(2, 2)
+        builder.button(text="▶️ Посмотреть", url=source_url)
+        builder.adjust(3, 1)
     else:
         builder.adjust(2, 1)
+    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
 
     await callback.message.edit_text(
         f"🎲 Случайный рецепт:\n\n{formatted}",
@@ -363,9 +355,9 @@ async def handle_search_category(callback: CallbackQuery) -> None:
     rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
     builder.button(text="🎲 Другой рецепт", callback_data=f"srnd:{cc}:{cache_key}")
-    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
     builder.adjust(2, 1)
     
     await callback.message.edit_text(
@@ -427,9 +419,9 @@ async def handle_search_random(callback: CallbackQuery) -> None:
     rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
     builder.button(text="🎲 Другой рецепт", callback_data=f"srnd:{cc}:{cache_key}")
-    builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
     builder.adjust(2, 1)
     
     await callback.message.edit_text(
