@@ -40,29 +40,24 @@ def _cat_code(category: str) -> str:
     return config.CATEGORY_TO_CODE.get(category, "o")
 
 
-def _recipe_keyboard(category: str, slug: str, url: str | None = None) -> InlineKeyboardMarkup:
+def _recipe_keyboard(category: str, slug: str) -> InlineKeyboardMarkup:
     """Клавиатура под рецептом"""
     rk = cache.put({"category": category, "slug": slug})
     cc = _cat_code(category)
     builder = InlineKeyboardBuilder()
     builder.button(text="🗑 Удалить", callback_data=f"del:{cc}:{rk}")
     builder.button(text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}")
-    if url:
-        builder.button(text="▶️ Открыть Reels", url=url)
-        builder.adjust(2, 1)
-    else:
-        builder.adjust(2)
+    builder.adjust(2)
     return builder.as_markup()
 
 
-def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = None, recipe: object = None) -> InlineKeyboardMarkup:
+def _duplicate_keyboard(category: str, slug: str, sha: str, recipe: object = None) -> InlineKeyboardMarkup:
     """Клавиатура при обнаружении дубликата
     
     Args:
         category: категория рецепта
         slug: slug рецепта
         sha: SHA файла в GitHub
-        url: исходная ссылка на видео (опционально)
         recipe: полный объект Recipe (для кнопки "Перезаписать")
     """
     # Сохраняем полный рецепт + sha в кэш
@@ -82,11 +77,7 @@ def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = No
         text="📝 Сохранить как новый",
         callback_data=f"sn:{cc}:{rk}",
     )
-    if url:
-        builder.button(text="▶️ Открыть Reels", url=url)
-        builder.adjust(2, 1)
-    else:
-        builder.adjust(2)
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -180,7 +171,7 @@ async def handle_link(message: Message) -> None:
             f"{recipe.format_message()}\n\n"
             f"Что делаем?",
             reply_markup=_duplicate_keyboard(
-                recipe.category, recipe.slug, duplicate_info["sha"], source_url, recipe
+                recipe.category, recipe.slug, duplicate_info["sha"], recipe
             ),
         )
     else:
@@ -188,7 +179,7 @@ async def handle_link(message: Message) -> None:
         status = "✅ Рецепт сохранён!" if is_new else "✅ Рецепт добавлен в вашу коллекцию!"
         await processing_msg.edit_text(
             f"{status}\n\n{recipe.format_message()}",
-            reply_markup=_recipe_keyboard(recipe.category, recipe.slug, source_url),
+            reply_markup=_recipe_keyboard(recipe.category, recipe.slug),
         )
 
 

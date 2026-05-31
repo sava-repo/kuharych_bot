@@ -171,7 +171,13 @@ async def handle_menu_category(message: Message) -> None:
     builder.button(
         text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
     )
-    builder.adjust(2, 1)
+    # Ищем source URL для кнопки "Открыть Reels"
+    source_url = gm.find_source_by_slug(category, slug)
+    if source_url:
+        builder.button(text="▶️ Открыть Reels", url=source_url)
+        builder.adjust(2, 2)
+    else:
+        builder.adjust(2, 1)
 
     await message.answer(
         f"🎲 Случайный рецепт:\n\n{formatted}",
@@ -217,7 +223,13 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
     builder.button(
         text="📂 Другая категория", callback_data=f"rcat:{cc}:{rk}"
     )
-    builder.adjust(2, 1)
+    # Ищем source URL для кнопки "Открыть Reels"
+    source_url = gm.find_source_by_slug(category, slug)
+    if source_url:
+        builder.button(text="▶️ Открыть рилс", url=source_url)
+        builder.adjust(2, 2)
+    else:
+        builder.adjust(2, 1)
 
     await callback.message.edit_text(
         f"🎲 Случайный рецепт:\n\n{formatted}",
