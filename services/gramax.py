@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 MAX_REDIRECTS = 5
 
 
+class RecipeNotFoundError(Exception):
+    """Рецепт не найден в GitHub."""
+    pass
+
+
 def _api_url(path: str = "") -> str:
     """Строит URL для GitHub Contents API"""
     return f"{config.GITHUB_API_BASE}/repos/{config.GITHUB_REPO}/contents/{path}"

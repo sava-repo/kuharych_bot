@@ -8,6 +8,7 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 
 import config
 from services import downloader, transcriber, recipe_parser, gramax, lobstr, cache
@@ -89,6 +90,25 @@ def _duplicate_keyboard(category: str, slug: str, sha: str, url: str | None = No
     return builder.as_markup()
 
 
+_PROCESSING_DOTS = ["⏳ Обрабатываю.", "⏳ Обрабатываю..", "⏳ Обрабатываю..."]
+_DOT_INTERVAL = 0.5  # секунды между сменой точек
+
+
+async def _animate_dots(msg: Message) -> None:
+    """Фоновая задача — анимирует точки в сообщении «Обрабатываю...»"""
+    i = 0
+    try:
+        while True:
+            await asyncio.sleep(_DOT_INTERVAL)
+            try:
+                await msg.edit_text(_PROCESSING_DOTS[i % len(_PROCESSING_DOTS)])
+            except TelegramBadRequest:
+                pass  # сообщение не изменилось или удалено — игнорируем
+            i += 1
+    except asyncio.CancelledError:
+        pass  # нормальное завершение — задача отменена
+
+
 @router.message(F.text, Command("start", "help"))
 async def cmd_start(message: Message) -> None:
     """Обработка /start и /help"""
@@ -116,8 +136,9 @@ async def handle_link(message: Message) -> None:
     user_id = message.from_user.id
     active_group_id = gm.get_user_active_group(user_id)
 
-    # Запускаем обработку
+    # Запускаем обработку с анимацией точек
     processing_msg = await message.answer("⏳ Обрабатываю...")
+    animation_task = asyncio.create_task(_animate_dots(processing_msg))
 
     try:
         result = await asyncio.wait_for(
@@ -125,9 +146,11 @@ async def handle_link(message: Message) -> None:
             timeout=config.PROCESSING_TIMEOUT_SEC,
         )
     except asyncio.TimeoutError:
+        animation_task.cancel()
         await processing_msg.edit_text("⏰ Обработка заняла слишком много времени. Попробуйте снова")
         return
     except Exception as e:
+        animation_task.cancel()
         logger.error(f"Processing error: {e}", exc_info=True)
         error_text = str(e)
 
@@ -145,6 +168,8 @@ async def handle_link(message: Message) -> None:
         else:
             await processing_msg.edit_text(f"❌ Произошла ошибка. Попробуйте позже")
         return
+    finally:
+        animation_task.cancel()
 
     recipe, duplicate_info, source_url, is_new = result
 
@@ -199,8 +224,9 @@ async def _process_video(
                 recipe = _parse_recipe_from_markdown(content, category, url)
                 return recipe, None, url, False
             except gramax.RecipeNotFoundError:
-                # Рецепт удалён из GitHub
-                raise RuntimeError("⚠️ Рецепт по этой ссылке больше не доступен. Отправьте ссылку заново для повторного сохранения")
+                # Рецепт удалён из GitHub — убираем устаревшую запись и обрабатываем заново
+                logger.warning(f"Recipe {category}/{slug} not found in GitHub, unregistering source {url}")
+                gm.unregister_source(url)
 
         # 1. Параллельно: скачиваем видео + получаем caption через Lobstr.io
         lobstr_task = asyncio.create_task(lobstr.get_reel_caption(url))
