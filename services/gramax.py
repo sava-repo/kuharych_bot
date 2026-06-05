@@ -3,21 +3,16 @@
 import base64
 import logging
 from datetime import date
-from typing import Any
 
 import httpx
 
 import config
+from exceptions import RecipeNotFoundError
 from models.recipe import Recipe
 
 logger = logging.getLogger(__name__)
 
 MAX_REDIRECTS = 5
-
-
-class RecipeNotFoundError(Exception):
-    """Рецепт не найден в GitHub."""
-    pass
 
 
 def _api_url(path: str = "") -> str:
@@ -286,3 +281,46 @@ async def move_recipe(
     # Сохраняем в новой
     recipe.category = new_category
     return await save_recipe(recipe)
+
+
+async def move_recipe_content(
+    old_category: str, slug: str, new_category: str
+) -> None:
+    """
+    Перемещает рецепт в другую категорию по Markdown-контенту.
+
+    Читает текущий файл, обновляет категорию в YAML frontmatter,
+    удаляет старый файл и создаёт в новой категории.
+    """
+    try:
+        content = await get_recipe_content(old_category, f"{slug}.md")
+    except RecipeNotFoundError:
+        raise
+
+    # Обновляем category в YAML frontmatter
+    content = content.replace(
+        f"category: {old_category}",
+        f"category: {new_category}",
+    )
+
+    # Удаляем из старой категории
+    await delete_recipe(old_category, slug)
+
+    # Сохраняем в новой категории
+    await _ensure_category_dir(new_category)
+
+    content_b64 = base64.b64encode(content.encode("utf-8")).decode()
+    filepath = f"receipts/{new_category}/{slug}.md"
+    url = _api_url(filepath)
+
+    resp = await _github_request(
+        "PUT",
+        url,
+        json={
+            "message": f"Move recipe: {slug} from {old_category} to {new_category}",
+            "content": content_b64,
+        },
+    )
+
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub API error: {resp.status_code}")

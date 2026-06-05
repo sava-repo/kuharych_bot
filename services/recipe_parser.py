@@ -6,14 +6,13 @@ from pathlib import Path
 import httpx
 
 import config
+from constants import VALID_CATEGORIES
+from exceptions import NotARecipeError, RecipeParseError
 from models.recipe import Recipe
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.txt"
-
-VALID_CATEGORIES = ["завтрак", "основное блюдо", "десерт"]
-
 
 def _load_system_prompt() -> str:
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
@@ -161,16 +160,6 @@ def _generate_tags(title: str, ingredients: list[str]) -> list[str]:
                 tags.add(product)
 
     return list(tags)[:10]
-
-
-class NotARecipeError(Exception):
-    """Видео не содержит рецепт"""
-    pass
-
-
-class RecipeParseError(Exception):
-    """Ошибка парсинга ответа GLM-5"""
-    pass
 
 
 async def generate_recipe(transcription: str | None, caption: str | None, source: str) -> Recipe:

@@ -1,0 +1,17 @@
+﻿python : Python 
+строка:1 знак:1
++ python check_syntax.p
+y 2>&1 | Out-File -File
+Path check_result.txt -
+En ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (Python :Strin   
+ g) [], RemoteExcep    
+tion
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 

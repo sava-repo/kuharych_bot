@@ -1,1 +1,1 @@
-# handlers package
+"""Обработчики Telegram-бота (aiogram routers)."""
