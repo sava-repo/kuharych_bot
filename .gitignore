@@ -1,3 +1,14 @@
 data/*.db
 data/*.json
 .env.example
+
+# Dashboard
+dashboard/data/*.db
+dashboard/data/*.db-journal
+dashboard/data/*.db-wal
+dashboard/data/*.db-shm
+dashboard/.streamlit/secrets.toml
+dashboard/__pycache__/
+dashboard/**/__pycache__/
+dashboard/.venv/
+dashboard/venv/
