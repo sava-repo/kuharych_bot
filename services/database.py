@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 
 import config
+from services import lemmatizer
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +84,58 @@ class Database:
                     category TEXT NOT NULL,
                     slug TEXT NOT NULL,
                     ingredient TEXT NOT NULL,
+                    ingredient_lemmas TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (category, slug, ingredient)
                 );
             """)
+        self._migrate_recipe_lemmas_column()
         self._migrate_from_json()
+        self._migrate_ingredient_lemmas_backfill()
+
+    def _migrate_recipe_lemmas_column(self) -> None:
+        """Добавляет колонку ingredient_lemmas, если её нет (обратно совместимо)."""
+        with self.connect_raw() as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(recipe_ingredients)").fetchall()}
+            if "ingredient_lemmas" not in cols:
+                conn.execute(
+                    "ALTER TABLE recipe_ingredients "
+                    "ADD COLUMN ingredient_lemmas TEXT NOT NULL DEFAULT ''"
+                )
+                logger.info("Added column recipe_ingredients.ingredient_lemmas")
+
+    def _migrate_ingredient_lemmas_backfill(self) -> None:
+        """Заполняет ingredient_lemmas для ранее сохранённых строк (одноразово).
+
+        Использует connect_raw(), т.к. вызывается из _init_db() до установки
+        флага _initialized (и connect() привёл бы к рекурсии).
+        """
+        with self.connect_raw() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT category, slug, ingredient FROM recipe_ingredients "
+                "WHERE ingredient_lemmas = '' OR ingredient_lemmas IS NULL"
+            ).fetchall()
+
+        if not rows:
+            return
+
+        logger.info("Backfilling ingredient_lemmas for %d rows...", len(rows))
+        with self.connect_raw() as conn:
+            for row in rows:
+                lemmas = lemmatizer.lemmatize_text(row["ingredient"])
+                if not lemmas:
+                    continue
+                conn.execute(
+                    "UPDATE recipe_ingredients SET ingredient_lemmas = ? "
+                    "WHERE category = ? AND slug = ? AND ingredient = ?",
+                    (
+                        " ".join(lemmas),
+                        row["category"],
+                        row["slug"],
+                        row["ingredient"],
+                    ),
+                )
+        logger.info("Backfill completed")
 
     def connect_raw(self) -> sqlite3.Connection:
         """Подключение без row_factory (для DDL и миграций)."""

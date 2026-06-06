@@ -8,6 +8,7 @@ import logging
 import secrets
 
 from models.group import Group, User
+from services import lemmatizer
 from services.database import Database
 
 logger = logging.getLogger(__name__)
@@ -394,16 +395,22 @@ def unregister_source(source_url: str) -> None:
 # ── Индекс ингредиентов для поиска ─────────────────────────────────────
 
 def index_recipe_ingredients(category: str, slug: str, ingredients: list[str]) -> None:
-    """Индексирует ингредиенты рецепта для поиска."""
+    """Индексирует ингредиенты рецепта для поиска.
+
+    Сохраняет как исходную строку (`ingredient`), так и лемматизированное
+    представление (`ingredient_lemmas`) для морфологического поиска.
+    """
     with db.connect() as conn:
         conn.execute(
             "DELETE FROM recipe_ingredients WHERE category = ? AND slug = ?",
             (category, slug),
         )
         for ing in ingredients:
+            lemmas = lemmatizer.lemmatize_text(ing)
             conn.execute(
-                "INSERT INTO recipe_ingredients (category, slug, ingredient) VALUES (?, ?, ?)",
-                (category, slug, ing),
+                "INSERT OR REPLACE INTO recipe_ingredients "
+                "(category, slug, ingredient, ingredient_lemmas) VALUES (?, ?, ?, ?)",
+                (category, slug, ing, " ".join(lemmas)),
             )
         logger.debug("Indexed %s ingredients for %s/%s", len(ingredients), category, slug)
 
@@ -419,16 +426,32 @@ def remove_recipe_ingredients(category: str, slug: str) -> None:
 
 
 def search_recipes_by_ingredient(group_id: str, query: str, category: str) -> list[str]:
-    """Ищет рецепты по ингредиенту в группе и категории. Возвращает список slugs."""
+    """Ищет рецепты по ингредиенту в группе и категории. Возвращает список slugs.
+
+    Поиск морфологически устойчив: запрос лемматизируется (через pymorphy),
+    и каждая лемма ищется по колонке `ingredient_lemmas`. При нескольких леммах
+    в запросе они объединяются через AND (точный поиск по фразе).
+    """
+    if not query or not query.strip():
+        return []
+
+    query_lemmas = lemmatizer.lemmatize_text(query)
+    if not query_lemmas:
+        return []
+
+    where_clauses = " AND ".join(["ri.ingredient_lemmas LIKE ?"] * len(query_lemmas))
+    params = [f"%{lemma}%" for lemma in query_lemmas] + [group_id, category]
+
+    sql = f"""
+        SELECT DISTINCT ri.slug
+        FROM recipe_ingredients ri
+        INNER JOIN group_recipes gr
+            ON gr.category = ri.category AND gr.slug = ri.slug
+        WHERE {where_clauses}
+          AND gr.group_id = ?
+          AND ri.category = ?
+    """
+
     with db.connect() as conn:
-        rows = conn.execute(
-            """SELECT DISTINCT ri.slug
-               FROM recipe_ingredients ri
-               INNER JOIN group_recipes gr
-                   ON gr.category = ri.category AND gr.slug = ri.slug
-               WHERE ri.ingredient LIKE ?
-                 AND gr.group_id = ?
-                 AND ri.category = ?""",
-            (f"%{query}%", group_id, category),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         return [r["slug"] for r in rows]
