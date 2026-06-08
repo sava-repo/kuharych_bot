@@ -19,22 +19,8 @@ GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL: str = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL: str = "whisper-large-v3"
 
-# Whitelist (deprecated — доступ управляется через группы)
-WHITELIST_CHAT_IDS: list[int] = [
-    int(cid.strip())
-    for cid in os.getenv("WHITELIST_CHAT_IDS", "").split(",")
-    if cid.strip().isdigit()
-]
-
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-# Admin access for test commands
-ADMIN_IDS: list[int] = [
-    int(uid.strip())
-    for uid in os.getenv("ADMIN_IDS", "").split(",")
-    if uid.strip().isdigit()
-]
 
 # Testing environment (local or server)
 TESTING_ENV: str = os.getenv("TESTING_ENV", "local")

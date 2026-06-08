@@ -100,8 +100,7 @@ with col_recipes:
         SELECT gr.category,
                gr.slug,
                r.title,
-               (SELECT source_url FROM source_index si
-                  WHERE si.category = gr.category AND si.slug = gr.slug) AS source
+               r.source
         FROM group_recipes gr
         LEFT JOIN recipes r ON r.category = gr.category AND r.slug = gr.slug
         WHERE gr.group_id = ?

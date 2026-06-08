@@ -61,28 +61,30 @@ with tab_text:
 
 with tab_url:
     url_query = st.text_input(
-        "Часть URL",
+        "Часть reel ID или URL",
         key="url_query",
-        placeholder="например: instagram.com/reel/ABC",
+        placeholder="например: DVSuWNrjaLo",
     )
     if url_query.strip():
         result = run_query(
             conn,
             """
-            SELECT source_url, category, slug
-            FROM source_index
-            WHERE source_url LIKE ?
-            ORDER BY source_url
+            SELECT ri.reel_id, ri.category, ri.slug, r.source
+            FROM reel_index ri
+            LEFT JOIN recipes r ON r.category = ri.category AND r.slug = ri.slug
+            WHERE ri.reel_id LIKE ? OR r.source LIKE ?
+            ORDER BY ri.reel_id
             """,
-            (f"%{url_query.strip()}%",),
+            (f"%{url_query.strip()}%", f"%{url_query.strip()}%"),
         )
         st.caption(f"Найдено строк: {len(result)}")
         st.dataframe(
             result.rename(
                 columns={
-                    "source_url": "URL",
+                    "reel_id": "Reel ID",
                     "category": "Категория",
                     "slug": "Slug",
+                    "source": "URL",
                 }
             ),
             hide_index=True,
@@ -160,7 +162,7 @@ with st.expander("📖 Схема БД"):
         | `groups` | `group_id`, `name`, `owner_id`, `invite_code` |
         | `group_members` | `group_id`, `user_id` |
         | `group_recipes` | `group_id`, `category`, `slug` |
-        | `source_index` | `source_url`, `category`, `slug` |
+        | `reel_index` | `reel_id`, `category`, `slug` |
         | `recipes` | `category`, `slug`, `title`, `content_md`, `source`, `full_text_lemmas`, `created` |
         | `recipe_ingredients` | `category`, `slug`, `ingredient`, `ingredient_lemmas` |
         """

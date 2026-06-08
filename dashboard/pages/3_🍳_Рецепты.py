@@ -28,8 +28,7 @@ recipes_df = run_query(
            gr.slug,
            r.title,
            COUNT(DISTINCT gr.group_id) AS groups_count,
-           (SELECT source_url FROM source_index si
-              WHERE si.category = gr.category AND si.slug = gr.slug) AS source
+           r.source
     FROM (
         SELECT DISTINCT category, slug, group_id FROM group_recipes
     ) gr
@@ -148,12 +147,12 @@ with col_ingredients:
 
 source_row = run_query(
     conn,
-    "SELECT source_url FROM source_index WHERE category = ? AND slug = ?",
+    "SELECT source FROM recipes WHERE category = ? AND slug = ?",
     (selected_cat, selected_slug),
 )
 
 st.divider()
-if not source_row.empty:
+if not source_row.empty and source_row.iloc[0, 0]:
     source_url = source_row.iloc[0, 0]
     st.markdown(f"**🔗 Источник:** {source_url}")
 else:

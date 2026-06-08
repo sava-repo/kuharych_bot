@@ -1,7 +1,7 @@
 """Управление пользователями, группами и связями с рецептами.
 
 Хранилище — SQLite (data/bot.db).
-Таблицы: users, groups, group_members, group_recipes, source_index, recipe_ingredients, recipes.
+Таблицы: users, groups, group_members, group_recipes, reel_index, recipe_ingredients, recipes.
 """
 
 import logging
