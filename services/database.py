@@ -80,6 +80,12 @@ class Database:
                     slug TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS reel_index (
+                    reel_id TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    slug TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS recipe_ingredients (
                     category TEXT NOT NULL,
                     slug TEXT NOT NULL,
@@ -102,6 +108,9 @@ class Database:
         self._migrate_recipe_lemmas_column()
         self._migrate_from_json()
         self._migrate_ingredient_lemmas_backfill()
+        self._migrate_source_to_reel_index()
+        self._cleanup_orphaned_group_recipes()
+        self._backfill_recipe_source()
 
     def _migrate_recipe_lemmas_column(self) -> None:
         """Добавляет колонку ingredient_lemmas, если её нет (обратно совместимо)."""
@@ -147,6 +156,76 @@ class Database:
                     ),
                 )
         logger.info("Backfill completed")
+
+    def _migrate_source_to_reel_index(self) -> None:
+        """Миграция данных из source_index (полные URL) в reel_index (reel ID)."""
+        import re
+        pattern = re.compile(r"instagram\.com/reel(?:s)?/([A-Za-z0-9_-]+)", re.IGNORECASE)
+
+        with self.connect_raw() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT source_url, category, slug FROM source_index"
+            ).fetchall()
+
+        if not rows:
+            return
+
+        migrated = 0
+        with self.connect_raw() as conn:
+            for row in rows:
+                match = pattern.search(row["source_url"])
+                if not match:
+                    continue
+                reel_id = match.group(1)
+                conn.execute(
+                    "INSERT OR IGNORE INTO reel_index (reel_id, category, slug) VALUES (?, ?, ?)",
+                    (reel_id, row["category"], row["slug"]),
+                )
+                migrated += 1
+
+        if migrated:
+            logger.info("Migrated %d entries from source_index to reel_index", migrated)
+
+    def _cleanup_orphaned_group_recipes(self) -> None:
+        """Удаляет записи из group_recipes, для которых нет контента в recipes."""
+        with self.connect_raw() as conn:
+            cursor = conn.execute(
+                "DELETE FROM group_recipes "
+                "WHERE (category, slug) NOT IN ("
+                "  SELECT category, slug FROM recipes"
+                ")"
+            )
+            removed = cursor.rowcount
+        if removed:
+            logger.info("Cleaned up %d orphaned group_recipes entries", removed)
+
+    def _backfill_recipe_source(self) -> None:
+        """Заполняет пустой source в recipes из source_index."""
+        with self.connect_raw() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT r.category, r.slug, si.source_url "
+                "FROM recipes r "
+                "INNER JOIN source_index si ON si.category = r.category AND si.slug = r.slug "
+                "WHERE r.source = '' OR r.source IS NULL"
+            ).fetchall()
+
+        if not rows:
+            return
+
+        updated = 0
+        with self.connect_raw() as conn:
+            for row in rows:
+                clean_url = row["source_url"].split("?")[0]
+                conn.execute(
+                    "UPDATE recipes SET source = ? WHERE category = ? AND slug = ?",
+                    (clean_url, row["category"], row["slug"]),
+                )
+                updated += 1
+
+        if updated:
+            logger.info("Backfilled source URL for %d recipes", updated)
 
     def connect_raw(self) -> sqlite3.Connection:
         """Подключение без row_factory (для DDL и миграций)."""

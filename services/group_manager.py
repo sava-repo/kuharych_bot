@@ -330,26 +330,45 @@ def recipe_exists_in_any_group(category: str, slug: str) -> bool:
         return row is not None
 
 
-# ── Индекс source URL → рецепт ────────────────────────────────────────
+# ── Индекс reel ID → рецепт ─────────────────────────────────────────────
 
-def find_recipe_by_source(source_url: str) -> dict | None:
-    """Ищет рецепт по URL источника. Возвращает {category, slug} или None."""
+import re as _re
+
+_REEL_ID_PATTERN = _re.compile(
+    r"instagram\.com/reel(?:s)?/([A-Za-z0-9_-]+)", _re.IGNORECASE
+)
+
+
+def _extract_reel_id(url: str) -> str | None:
+    """Извлекает reel ID из Instagram URL."""
+    match = _REEL_ID_PATTERN.search(url)
+    return match.group(1) if match else None
+
+
+def find_recipe_by_source(url: str) -> dict | None:
+    """Ищет рецепт по reel ID. Возвращает {category, slug} или None."""
+    reel_id = _extract_reel_id(url)
+    if not reel_id:
+        return None
     with db.connect() as conn:
         row = conn.execute(
-            "SELECT category, slug FROM source_index WHERE source_url = ?",
-            (source_url,),
+            "SELECT category, slug FROM reel_index WHERE reel_id = ?",
+            (reel_id,),
         ).fetchone()
         if not row:
             return None
         return {"category": row["category"], "slug": row["slug"]}
 
 
-def register_source(source_url: str, category: str, slug: str) -> None:
-    """Регистрирует связь source URL → рецепт."""
+def register_source(url: str, category: str, slug: str) -> None:
+    """Регистрирует связь reel ID → рецепт."""
+    reel_id = _extract_reel_id(url)
+    if not reel_id:
+        return
     with db.connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO source_index (source_url, category, slug) VALUES (?, ?, ?)",
-            (source_url, category, slug),
+            "INSERT OR REPLACE INTO reel_index (reel_id, category, slug) VALUES (?, ?, ?)",
+            (reel_id, category, slug),
         )
 
 
@@ -375,21 +394,24 @@ def move_recipe_category(old_category: str, slug: str, new_category: str) -> int
 
 
 def find_source_by_slug(category: str, slug: str) -> str | None:
-    """Находит source_url по категории и slug."""
+    """Находит полный URL рецепта из таблицы recipes."""
     with db.connect() as conn:
         row = conn.execute(
-            "SELECT source_url FROM source_index WHERE category = ? AND slug = ?",
+            "SELECT source FROM recipes WHERE category = ? AND slug = ?",
             (category, slug),
         ).fetchone()
-        return row["source_url"] if row else None
+        return row["source"] if row and row["source"] else None
 
 
-def unregister_source(source_url: str) -> None:
-    """Удаляет связь source URL → рецепт."""
+def unregister_source(url: str) -> None:
+    """Удаляет связь reel ID → рецепт."""
+    reel_id = _extract_reel_id(url)
+    if not reel_id:
+        return
     with db.connect() as conn:
         conn.execute(
-            "DELETE FROM source_index WHERE source_url = ?",
-            (source_url,),
+            "DELETE FROM reel_index WHERE reel_id = ?",
+            (reel_id,),
         )
 
 

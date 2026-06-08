@@ -211,8 +211,11 @@ async def handle_invite_code_entered(message: Message, state: FSMContext) -> Non
     """Вступает в группу по инвайт-коду"""
     code = message.text.strip()
     if not code:
-        await message.answer("❌ Пустой код. Введите инвайт-код:")
+        await state.clear()
+        await message.answer("❌ Пустой код.")
         return
+
+    await state.clear()
 
     group = gm.join_group_by_code(code, message.from_user.id)
     if group:
@@ -222,11 +225,9 @@ async def handle_invite_code_entered(message: Message, state: FSMContext) -> Non
         )
     else:
         await message.answer(
-            "❌ Группа с таким кодом не найдена. Попробуйте ещё раз:",
+            "❌ Группа с таким кодом не найдена.",
+            reply_markup=_group_list_keyboard(message.from_user.id),
         )
-        return
-
-    await state.clear()
 
 
 # ── Получение инвайт-кода ────────────────────────────────────────────
@@ -240,7 +241,12 @@ async def handle_grp_invite(callback: CallbackQuery) -> None:
     code = gm.generate_invite_code(group_id, user_id)
     if code:
         group = gm.get_group(group_id)
-        await callback.answer(f"Инвайт-код: {code}", show_alert=True)
+        group_name = group.name if group else "Неизвестная"
+        await callback.answer()
+        await callback.message.answer(
+            f"🔗 Инвайт-код для группы «{group_name}»:\n\n`{code}`",
+            parse_mode="Markdown",
+        )
     else:
         await callback.answer("Нет прав для создания инвайт-кода", show_alert=True)
 

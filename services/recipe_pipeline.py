@@ -14,6 +14,11 @@ import services.group_manager as gm
 logger = logging.getLogger(__name__)
 
 
+def _clean_url(url: str) -> str:
+    """Отрезает query-параметры (?igsh=..., ?utm=... и т.д.)."""
+    return url.split("?")[0]
+
+
 class PipelineResult:
     """Результат обработки видео."""
 
@@ -54,6 +59,7 @@ async def process_video(
         RuntimeError: другие ошибки обработки
     """
     video_path: str | None = None
+    clean_url = _clean_url(url)
 
     try:
         existing = gm.find_recipe_by_source(url)
@@ -88,14 +94,14 @@ async def process_video(
         if duplicate:
             gm.register_source(url, recipe.category, recipe.slug)
             gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
-            return PipelineResult(recipe, {"category": recipe.category, "slug": recipe.slug}, url, True)
+            return PipelineResult(recipe, {"category": recipe.category, "slug": recipe.slug}, clean_url, True)
 
         gm.save_recipe(
             category=recipe.category,
             slug=recipe.slug,
             title=recipe.title,
             content_md=recipe.to_markdown(created=""),
-            source=url,
+            source=clean_url,
             ingredients=recipe.ingredients,
             steps=recipe.steps,
         )
@@ -103,7 +109,7 @@ async def process_video(
         gm.register_source(url, recipe.category, recipe.slug)
         gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
 
-        return PipelineResult(recipe, None, url, True)
+        return PipelineResult(recipe, None, clean_url, True)
 
     finally:
         if video_path:
@@ -114,13 +120,14 @@ async def _handle_existing_recipe(
     existing: dict, group_id: str, url: str
 ) -> PipelineResult | None:
     """
-    Обрабатывает случай, когда рецепт с таким source URL уже существует.
+    Обрабатывает случай, когда рецепт с таким reel ID уже существует.
 
     Returns:
         PipelineResult если рецепт загружен, None если нужно обработать заново
     """
     category = existing["category"]
     slug = existing["slug"]
+    clean_url = _clean_url(url)
 
     group_slugs = gm.get_group_recipes_by_category(group_id, category)
     if slug in group_slugs:
@@ -128,8 +135,8 @@ async def _handle_existing_recipe(
         if not recipe_data:
             gm.unregister_source(url)
             return None
-        recipe = Recipe.from_markdown(recipe_data["content_md"], category, url)
-        return PipelineResult(recipe, None, url, False)
+        recipe = Recipe.from_markdown(recipe_data["content_md"], category, clean_url)
+        return PipelineResult(recipe, None, clean_url, False)
 
     gm.add_recipe_to_group(group_id, category, slug)
     recipe_data = gm.get_recipe(category, slug)
@@ -141,5 +148,5 @@ async def _handle_existing_recipe(
         gm.unregister_source(url)
         return None
 
-    recipe = Recipe.from_markdown(recipe_data["content_md"], category, url)
-    return PipelineResult(recipe, None, url, False)
+    recipe = Recipe.from_markdown(recipe_data["content_md"], category, clean_url)
+    return PipelineResult(recipe, None, clean_url, False)

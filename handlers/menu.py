@@ -66,6 +66,10 @@ async def handle_menu_category(message: Message) -> None:
 
     recipe_data = gm.get_recipe(category, slug)
     if not recipe_data:
+        logger.warning(
+            "Recipe not found in DB: category=%s, slug=%s, group_id=%s, user_id=%s",
+            category, slug, group_id, user_id,
+        )
         await message.answer("📭 Не удалось загрузить рецепт. Попробуйте снова")
         return
 
@@ -104,7 +108,7 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
     _, cc = parts
     category = code_to_category(cc)
 
-    await callback.answer("Выбираю другой рецепт...")
+    await callback.answer()
 
     group_slugs = gm.get_group_recipes_by_category(group_id, category)
     if not group_slugs:
@@ -120,6 +124,10 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     recipe_data = gm.get_recipe(category, slug)
     if not recipe_data:
+        logger.warning(
+            "Recipe not found in DB: category=%s, slug=%s, group_id=%s, user_id=%s",
+            category, slug, group_id, user_id,
+        )
         await callback.message.edit_text("📭 Не удалось загрузить рецепт. Попробуйте снова")
         return
 
@@ -238,6 +246,7 @@ def _format_search_results(
     for i, (cat, slug, title) in enumerate(page_results):
         rid = recipe_ids[i]
         lines.append(f"{title}")
+        lines.append(f"Категория: {cat.capitalize()}")
         lines.append(f"Открыть: /open{rid}")
         lines.append("")
 

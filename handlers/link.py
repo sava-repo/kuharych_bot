@@ -88,8 +88,8 @@ def _error_message(exc: Exception) -> str:
 async def cmd_start(message: Message) -> None:
     """Обработка /start и /help"""
     await message.answer(
-        "👋 Привет! Я бот для сохранения рецептов из Reels.\n\n"
-        "Отправь мне ссылку на Instagram Reels — "
+        "👋 Привет! Я помогаю решить, что приготовить.\n\n"
+        "Отправь мне ссылку на рилс — "
         "и я извлеку рецепт из видео.\n\n"
         "Используй кнопки меню внизу, чтобы получить случайный рецепт по категории.",
         reply_markup=MENU_KEYBOARD,
