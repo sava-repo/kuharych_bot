@@ -87,6 +87,17 @@ class Database:
                     ingredient_lemmas TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (category, slug, ingredient)
                 );
+
+                CREATE TABLE IF NOT EXISTS recipes (
+                    category TEXT NOT NULL,
+                    slug TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    content_md TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT '',
+                    full_text_lemmas TEXT NOT NULL DEFAULT '',
+                    created TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (category, slug)
+                );
             """)
         self._migrate_recipe_lemmas_column()
         self._migrate_from_json()

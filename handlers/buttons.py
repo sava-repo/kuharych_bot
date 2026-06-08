@@ -5,10 +5,8 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
-import services.gramax as gramax
 import services.group_manager as gm
 import services.cache as cache
-from exceptions import RecipeNotFoundError
 from constants import code_to_category
 from handlers.keyboards import (
     recipe_keyboard,
@@ -65,12 +63,8 @@ async def handle_delete(callback: CallbackQuery) -> None:
             return
 
         if not gm.recipe_exists_in_any_group(category, slug):
-            try:
-                await gramax.delete_recipe(category, slug)
-                gm.remove_recipe_ingredients(category, slug)
-                logger.info("Recipe fully deleted from GitHub: %s/%s", category, slug)
-            except Exception as e:
-                logger.warning("Failed to delete from GitHub (non-critical): %s", e)
+            gm.delete_recipe(category, slug)
+            logger.info("Recipe fully deleted from DB: %s/%s", category, slug)
 
         await callback.message.edit_text(f"🗑 Рецепт «{slug}» удалён из коллекции")
         logger.info("Recipe removed from group %s: %s/%s", group_id, category, slug)
@@ -94,27 +88,14 @@ async def handle_overwrite(callback: CallbackQuery) -> None:
 
     (_, rk), cached = result
     recipe = cached.get("recipe")
-    sha = cached.get("sha")
-    if not recipe or not sha:
+    if not recipe:
         await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
         return
 
     await callback.answer("Перезаписываю...")
 
     try:
-        await gramax.overwrite_recipe(recipe, sha)
-        gm.remove_recipe_ingredients(recipe.category, recipe.slug)
-        gm.index_recipe_ingredients(recipe.category, recipe.slug, recipe.ingredients)
-
-        duplicate_info = await gramax.check_duplicate(recipe.category, recipe.slug)
-        if duplicate_info:
-            cache.update(rk, {
-                "category": recipe.category,
-                "slug": recipe.slug,
-                "sha": duplicate_info["sha"],
-                "recipe": recipe,
-                "group_id": group_id,
-            })
+        gm.overwrite_recipe(recipe)
 
         await callback.message.edit_text(
             f"✅ Рецепт «{recipe.title}» перезаписан",
@@ -148,11 +129,9 @@ async def handle_save_new(callback: CallbackQuery) -> None:
     await callback.answer("Сохраняю как новый...")
 
     try:
-        filepath, suffix = await gramax.save_recipe_as_new(recipe)
-        new_slug = f"{recipe.slug}-{suffix}"
+        new_slug = gm.save_recipe_as_new(recipe)
 
         gm.add_recipe_to_group(group_id, recipe.category, new_slug)
-        gm.index_recipe_ingredients(recipe.category, new_slug, recipe.ingredients)
 
         await callback.message.edit_text(
             f"✅ Рецепт сохранён как «{new_slug}»",
@@ -208,13 +187,7 @@ async def handle_move(callback: CallbackQuery) -> None:
     await callback.answer(f"Перемещаю в «{new_category}»...")
 
     try:
-        try:
-            await gramax.move_recipe_content(old_category, slug, new_category)
-        except RecipeNotFoundError:
-            await callback.message.edit_text("⚠️ Рецепт не найден. Возможно, он был удалён.")
-            return
-
-        gm.move_recipe_category(old_category, slug, new_category)
+        gm.move_recipe(old_category, slug, new_category)
 
         source_url = gm.find_source_by_slug(old_category, slug)
         if source_url:
@@ -228,8 +201,6 @@ async def handle_move(callback: CallbackQuery) -> None:
         )
         logger.info("Recipe moved: %s/%s -> %s/%s", old_category, slug, new_category, slug)
 
-    except RecipeNotFoundError:
-        await callback.message.edit_text("⚠️ Рецепт не найден. Возможно, он был удалён.")
     except Exception as e:
         logger.error("Move error: %s", e, exc_info=True)
         await callback.message.edit_text("❌ Не удалось переместить рецепт. Попробуйте позже")

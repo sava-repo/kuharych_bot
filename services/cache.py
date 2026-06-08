@@ -18,6 +18,9 @@ _cache: dict[str, tuple[dict, float]] = {}
 # Счётчик для генерации уникальных ключей
 _counter = 0
 
+# Отдельный счётчик для рецептов (/open{key}) — начинается с 10000
+_recipe_counter = 10000
+
 
 def put(data: dict) -> str:
     """
@@ -94,11 +97,26 @@ def delete(key: str) -> None:
         logger.debug(f"Cache delete: {key}")
 
 
+def put_recipe(category: str, slug: str) -> int:
+    """
+    Сохраняет рецепт в кэш с числовым ключом (от 10000).
+    Возвращает числовой ID для использования в /open{key}.
+    """
+    global _recipe_counter
+    _evict_if_needed()
+    key = str(_recipe_counter)
+    _cache[key] = ({"category": category, "slug": slug}, time.time())
+    _recipe_counter += 1
+    logger.debug(f"Cache put_recipe: {key}, category={category}, slug={slug}")
+    return _recipe_counter - 1
+
+
 def clear() -> None:
     """Очищает весь кэш. Используется в тестах."""
-    global _counter
+    global _counter, _recipe_counter
     _cache.clear()
     _counter = 0
+    _recipe_counter = 10000
     logger.debug("Cache cleared")
 
 

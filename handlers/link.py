@@ -134,7 +134,7 @@ async def handle_link(message: Message) -> None:
             f"Что делаем?",
             reply_markup=duplicate_keyboard(
                 result.recipe.category, result.recipe.slug,
-                result.duplicate_info["sha"], result.recipe,
+                result.recipe,
             ),
         )
     else:

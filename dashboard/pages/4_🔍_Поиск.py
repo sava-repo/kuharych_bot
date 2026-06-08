@@ -22,36 +22,36 @@ conn: sqlite3.Connection = get_connection(str(db_path()))
 
 st.subheader("🔎 Быстрый поиск")
 
-tab_ing, tab_url, tab_slug = st.tabs(["По ингредиенту", "По source URL", "По slug"])
+tab_text, tab_url, tab_slug = st.tabs(["По тексту", "По source URL", "По slug"])
 
-with tab_ing:
-    ing_query = st.text_input(
-        "Ингредиент (или часть)",
+with tab_text:
+    text_query = st.text_input(
+        "Поиск по названию, ингредиентам, шагам",
         key="ing_query",
-        placeholder="например: томат",
+        placeholder="например: тирамису",
     )
-    if ing_query.strip():
+    if text_query.strip():
         result = run_query(
             conn,
             """
-            SELECT ri.category,
-                   ri.slug,
-                   ri.ingredient,
+            SELECT r.category,
+                   r.slug,
+                   r.title,
                    (SELECT COUNT(DISTINCT group_id) FROM group_recipes gr
-                      WHERE gr.category = ri.category AND gr.slug = ri.slug) AS groups_count
-            FROM recipe_ingredients ri
-            WHERE ri.ingredient LIKE ?
-            ORDER BY groups_count DESC, ri.ingredient
+                      WHERE gr.category = r.category AND gr.slug = r.slug) AS groups_count
+            FROM recipes r
+            WHERE r.title LIKE ? OR r.content_md LIKE ?
+            ORDER BY groups_count DESC, r.title
             """,
-            (f"%{ing_query.strip()}%",),
+            (f"%{text_query.strip()}%", f"%{text_query.strip()}%"),
         )
-        st.caption(f"Найдено строк: {len(result)}")
+        st.caption(f"Найдено рецептов: {len(result)}")
         st.dataframe(
             result.rename(
                 columns={
                     "category": "Категория",
                     "slug": "Slug",
-                    "ingredient": "Ингредиент",
+                    "title": "Название",
                     "groups_count": "В группах",
                 }
             ),
@@ -161,7 +161,8 @@ with st.expander("📖 Схема БД"):
         | `group_members` | `group_id`, `user_id` |
         | `group_recipes` | `group_id`, `category`, `slug` |
         | `source_index` | `source_url`, `category`, `slug` |
-        | `recipe_ingredients` | `category`, `slug`, `ingredient` |
+        | `recipes` | `category`, `slug`, `title`, `content_md`, `source`, `full_text_lemmas`, `created` |
+        | `recipe_ingredients` | `category`, `slug`, `ingredient`, `ingredient_lemmas` |
         """
     )
     st.code(

@@ -8,7 +8,7 @@ import logging
 from constants import MIN_CAPTION_WORDS, MIN_TRANSCRIPTION_WORDS
 from exceptions import NotARecipeError, RecipeParseError, SpeechNotRecognizedError
 from models.recipe import Recipe
-from services import gramax, hiker, transcriber, recipe_parser
+from services import hiker, transcriber, recipe_parser
 import services.group_manager as gm
 
 logger = logging.getLogger(__name__)
@@ -56,24 +56,20 @@ async def process_video(
     video_path: str | None = None
 
     try:
-        # 0. Проверяем — может рецепт с таким source URL уже существует
         existing = gm.find_recipe_by_source(url)
         if existing:
             result = await _handle_existing_recipe(existing, group_id, url)
             if result is not None:
                 return result
 
-        # 1. Скачиваем видео и получаем caption через HikerAPI
         video_path, caption = await hiker.download_reel(url, message_id)
         if caption:
             logger.info("Using HikerAPI caption (%s chars)", len(caption))
         else:
             logger.info("HikerAPI: no caption available")
 
-        # 2. Транскрибация (ffmpeg sync + Groq async)
         transcription = await transcriber.transcribe(video_path)
 
-        # Проверяем минимальную длину транскрипции
         word_count = len(transcription.split())
         if word_count < MIN_TRANSCRIPTION_WORDS:
             if caption and len(caption.split()) >= MIN_CAPTION_WORDS:
@@ -85,26 +81,27 @@ async def process_video(
             else:
                 raise SpeechNotRecognizedError("Не удалось распознать речь в видео")
 
-        # 3. Генерация рецепта
         recipe = await recipe_parser.generate_recipe(transcription, caption, url)
 
-        # 4. Проверка дубликата по slug в GitHub
-        duplicate = await gramax.check_duplicate(recipe.category, recipe.slug)
+        duplicate = gm.check_duplicate(recipe.category, recipe.slug)
 
         if duplicate:
             gm.register_source(url, recipe.category, recipe.slug)
             gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
-            return PipelineResult(recipe, duplicate, url, True)
+            return PipelineResult(recipe, {"category": recipe.category, "slug": recipe.slug}, url, True)
 
-        # 5. Сохранение в GitHub
-        await gramax.save_recipe(recipe)
+        gm.save_recipe(
+            category=recipe.category,
+            slug=recipe.slug,
+            title=recipe.title,
+            content_md=recipe.to_markdown(created=""),
+            source=url,
+            ingredients=recipe.ingredients,
+            steps=recipe.steps,
+        )
 
-        # 6. Регистрируем source URL и добавляем в группу
         gm.register_source(url, recipe.category, recipe.slug)
         gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
-
-        # 7. Индексируем ингредиенты для поиска
-        gm.index_recipe_ingredients(recipe.category, recipe.slug, recipe.ingredients)
 
         return PipelineResult(recipe, None, url, True)
 
@@ -125,22 +122,24 @@ async def _handle_existing_recipe(
     category = existing["category"]
     slug = existing["slug"]
 
-    try:
-        group_slugs = gm.get_group_recipes_by_category(group_id, category)
-        if slug in group_slugs:
-            content = await gramax.get_recipe_content(category, f"{slug}.md")
-            recipe = Recipe.from_markdown(content, category, url)
-            return PipelineResult(recipe, None, url, False)
-
-        gm.add_recipe_to_group(group_id, category, slug)
-        content = await gramax.get_recipe_content(category, f"{slug}.md")
-        recipe = Recipe.from_markdown(content, category, url)
+    group_slugs = gm.get_group_recipes_by_category(group_id, category)
+    if slug in group_slugs:
+        recipe_data = gm.get_recipe(category, slug)
+        if not recipe_data:
+            gm.unregister_source(url)
+            return None
+        recipe = Recipe.from_markdown(recipe_data["content_md"], category, url)
         return PipelineResult(recipe, None, url, False)
 
-    except gramax.RecipeNotFoundError:
+    gm.add_recipe_to_group(group_id, category, slug)
+    recipe_data = gm.get_recipe(category, slug)
+    if not recipe_data:
         logger.warning(
-            "Recipe %s/%s not found in GitHub, unregistering source %s",
+            "Recipe %s/%s not found in DB, unregistering source %s",
             category, slug, url,
         )
         gm.unregister_source(url)
         return None
+
+    recipe = Recipe.from_markdown(recipe_data["content_md"], category, url)
+    return PipelineResult(recipe, None, url, False)

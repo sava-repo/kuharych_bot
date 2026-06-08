@@ -4,7 +4,7 @@
 
 
 class RecipeNotFoundError(Exception):
-    """Рецепт не найден в GitHub."""
+    """Рецепт не найден."""
     pass
 
 

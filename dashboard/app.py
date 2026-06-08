@@ -44,10 +44,8 @@ st.subheader("📊 Быстрый обзор")
 try:
     users_count = run_query(conn, "SELECT COUNT(*) AS c FROM users").iloc[0, 0]
     groups_count = run_query(conn, "SELECT COUNT(*) AS c FROM groups").iloc[0, 0]
-    recipes_count = run_query(conn, "SELECT COUNT(*) AS c FROM group_recipes").iloc[0, 0]
-    ingredients_count = run_query(
-        conn, "SELECT COUNT(*) AS c FROM recipe_ingredients"
-    ).iloc[0, 0]
+    recipes_count = run_query(conn, "SELECT COUNT(*) AS c FROM recipes").iloc[0, 0]
+    groups_recipes_count = run_query(conn, "SELECT COUNT(*) AS c FROM group_recipes").iloc[0, 0]
 except sqlite3.Error as exc:
     st.error(f"Ошибка при чтении БД: {exc}")
     st.stop()
@@ -55,8 +53,8 @@ except sqlite3.Error as exc:
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Пользователи", int(users_count))
 m2.metric("Группы", int(groups_count))
-m3.metric("Рецепты (записей)", int(recipes_count))
-m4.metric("Ингредиенты (записей)", int(ingredients_count))
+m3.metric("Рецептов в БД", int(recipes_count))
+m4.metric("Связей рецепт↔группа", int(groups_recipes_count))
 
 # ─── Навигационный блок ────────────────────────────────────────────────────
 

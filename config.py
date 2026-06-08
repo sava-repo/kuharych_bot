@@ -19,11 +19,6 @@ GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL: str = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL: str = "whisper-large-v3"
 
-# GitHub API
-GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
-GITHUB_REPO: str = os.getenv("GITHUB_REPO", "sava-repo/new-catalog-2")
-GITHUB_API_BASE: str = "https://api.github.com"
-
 # Whitelist (deprecated — доступ управляется через группы)
 WHITELIST_CHAT_IDS: list[int] = [
     int(cid.strip())

@@ -26,14 +26,14 @@ recipes_df = run_query(
     """
     SELECT gr.category,
            gr.slug,
+           r.title,
            COUNT(DISTINCT gr.group_id) AS groups_count,
-           (SELECT COUNT(*) FROM recipe_ingredients ri
-              WHERE ri.category = gr.category AND ri.slug = gr.slug) AS ingredients,
            (SELECT source_url FROM source_index si
               WHERE si.category = gr.category AND si.slug = gr.slug) AS source
     FROM (
         SELECT DISTINCT category, slug, group_id FROM group_recipes
     ) gr
+    LEFT JOIN recipes r ON r.category = gr.category AND r.slug = gr.slug
     GROUP BY gr.category, gr.slug
     ORDER BY groups_count DESC, gr.category, gr.slug
     """,
@@ -48,8 +48,8 @@ st.dataframe(
         columns={
             "category": "Категория",
             "slug": "Slug",
+            "title": "Название",
             "groups_count": "В группах",
-            "ingredients": "Ингредиентов",
             "source": "Источник",
         }
     ),
@@ -71,8 +71,8 @@ st.dataframe(
     cat_df.rename(
         columns={
             "slug": "Slug",
+            "title": "Название",
             "groups_count": "В группах",
-            "ingredients": "Ингредиентов",
             "source": "Источник",
         }
     ),
@@ -127,6 +127,13 @@ with col_ingredients:
         """,
         (selected_cat, selected_slug),
     )
+    recipe_title_row = run_query(
+        conn,
+        "SELECT title FROM recipes WHERE category = ? AND slug = ?",
+        (selected_cat, selected_slug),
+    )
+    if not recipe_title_row.empty:
+        st.caption(f"**Название:** {recipe_title_row.iloc[0, 0]}")
     if ingredients_df.empty:
         st.caption("Ингредиенты не индексированы")
     else:

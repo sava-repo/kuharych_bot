@@ -99,11 +99,11 @@ with col_recipes:
         """
         SELECT gr.category,
                gr.slug,
-               (SELECT COUNT(*) FROM recipe_ingredients ri
-                  WHERE ri.category = gr.category AND ri.slug = gr.slug) AS ingredients,
+               r.title,
                (SELECT source_url FROM source_index si
                   WHERE si.category = gr.category AND si.slug = gr.slug) AS source
         FROM group_recipes gr
+        LEFT JOIN recipes r ON r.category = gr.category AND r.slug = gr.slug
         WHERE gr.group_id = ?
         ORDER BY gr.category, gr.slug
         """,
@@ -114,7 +114,7 @@ with col_recipes:
             columns={
                 "category": "Категория",
                 "slug": "Slug",
-                "ingredients": "Ингредиентов",
+                "title": "Название",
                 "source": "Источник",
             }
         ),

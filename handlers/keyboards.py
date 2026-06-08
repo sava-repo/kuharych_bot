@@ -43,16 +43,8 @@ def recipe_keyboard(
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура под рецептом.
-    
-    Args:
-        category: категория рецепта
-        slug: slug рецепта
-        group_id: ID группы (опционально, сохраняется в кэш)
-        source_url: URL источника для кнопки «Посмотреть»
-        include_random: показывать ли кнопку «Другой рецепт»
-        random_callback: кастомный callback для кнопки «Другой рецепт»
     """
-    rk = cache.put({"category": category, "slug": slug, "group_id": group_id})
+    rk = cache.put_recipe(category, slug)
     cc = category_to_code(category)
 
     builder = InlineKeyboardBuilder()
@@ -81,22 +73,14 @@ def recipe_keyboard(
 def duplicate_keyboard(
     category: str,
     slug: str,
-    sha: str,
     recipe: object = None,
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура при обнаружении дубликата рецепта.
-    
-    Args:
-        category: категория рецепта
-        slug: slug рецепта
-        sha: SHA файла в GitHub
-        recipe: полный объект Recipe (для кнопки «Перезаписать»)
     """
     rk = cache.put({
         "category": category,
         "slug": slug,
-        "sha": sha,
         "recipe": recipe,
     })
     cc = category_to_code(category)
@@ -111,16 +95,11 @@ def duplicate_keyboard(
 
 def category_select_keyboard(
     current_category: str,
-    rk: str,
+    rk,
     prefix: str = "mov",
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора категории (для перемещения рецепта).
-    
-    Args:
-        current_category: текущая категория (исключается из списка)
-        rk: ключ кэша с данными рецепта
-        prefix: префикс callback_data ("mov" или другой)
     """
     current_cc = category_to_code(current_category)
 
@@ -137,18 +116,33 @@ def category_select_keyboard(
     return builder.as_markup()
 
 
-def search_category_keyboard(cache_key: str) -> InlineKeyboardMarkup:
+def search_pagination_keyboard(
+    cache_key: str,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора категории для поиска по ингредиенту.
-    
-    Args:
-        cache_key: ключ кэша с данными поиска
+    Клавиатура пагинации для результатов поиска.
+
+    [« Назад] показывается только если page > 0.
+    [Вперед »] показывается только если есть ещё результаты.
     """
     builder = InlineKeyboardBuilder()
-    for cat in VALID_CATEGORIES:
-        cc = category_to_code(cat)
-        builder.button(text=cat.capitalize(), callback_data=f"srch:{cc}:{cache_key}")
-    builder.adjust(1)
+
+    has_prev = page > 0
+    page_size = 5
+    has_next = (page + 1) * page_size < total
+
+    if has_prev and has_next:
+        builder.button(text="« Назад", callback_data=f"spage:{cache_key}:{page - 1}")
+        builder.button(text="Вперед »", callback_data=f"spage:{cache_key}:{page + 1}")
+        builder.adjust(2)
+    elif has_prev:
+        builder.button(text="« Назад", callback_data=f"spage:{cache_key}:{page - 1}")
+        builder.adjust(1)
+    elif has_next:
+        builder.button(text="Вперед »", callback_data=f"spage:{cache_key}:{page + 1}")
+        builder.adjust(1)
 
     return builder.as_markup()
 

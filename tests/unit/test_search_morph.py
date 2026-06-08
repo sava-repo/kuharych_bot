@@ -1,4 +1,4 @@
-"""Тесты морфологического поиска по ингредиентам.
+"""Тесты полнотекстового поиска рецептов.
 
 Использует временную SQLite-БД через monkeypatch config.DATABASE_PATH.
 """
@@ -20,17 +20,16 @@ def temp_db(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "test_bot.db"
     monkeypatch.setattr(config, "DATABASE_PATH", str(db_path))
 
-    # Сбрасываем singleton Database, чтобы он переинициализировался на новый путь
-    Database._instance = None  # type: ignore[attr-defined]
+    Database._instance = None
     group_manager.db = Database.get_instance()
 
     yield
 
-    Database._instance = None  # type: ignore[attr-defined]
+    Database._instance = None
 
 
 def _setup_group(group_id: str = "pers_1", user_id: int = 1) -> None:
-    """Создаёт группу и пользователя напрямую в БД (без сложной логики)."""
+    """Создаёт группу и пользователя напрямую в БД."""
     with group_manager.db.connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
@@ -42,7 +41,18 @@ def _setup_group(group_id: str = "pers_1", user_id: int = 1) -> None:
         )
 
 
-def _link_recipe(group_id: str, category: str, slug: str) -> None:
+def _save_and_link(group_id: str, category: str, slug: str, title: str,
+                   ingredients: list[str], steps: list[str] | None = None) -> None:
+    """Сохраняет рецепт и привязывает к группе."""
+    group_manager.save_recipe(
+        category=category,
+        slug=slug,
+        title=title,
+        content_md=f"# {title}",
+        source="",
+        ingredients=ingredients,
+        steps=steps or [],
+    )
     with group_manager.db.connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO group_recipes (group_id, category, slug) VALUES (?, ?, ?)",
@@ -50,79 +60,110 @@ def _link_recipe(group_id: str, category: str, slug: str) -> None:
         )
 
 
-class TestSearchByIngredientMorphology:
-    def test_10_яиц_found_by_яйца(self, temp_db):
+class TestSearchFulltext:
+    def test_search_by_ingredient_lemma(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("завтрак", "omlet", ["10 яиц"])
-        _link_recipe("pers_1", "завтрак", "omlet")
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["10 яиц"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "яйца", "завтрак")
-        assert "omlet" in results
+        results = group_manager.search_recipes_fulltext("pers_1", "яйца")
+        assert len(results) == 1
+        assert results[0] == ("завтрак", "omlet", "Омлет")
 
-    def test_10_яиц_found_by_яйцо(self, temp_db):
+    def test_search_by_ingredient_lemma_singular(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("завтрак", "omlet", ["10 яиц"])
-        _link_recipe("pers_1", "завтрак", "omlet")
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["10 яиц"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "яйцо", "завтрак")
-        assert "omlet" in results
+        results = group_manager.search_recipes_fulltext("pers_1", "яйцо")
+        assert len(results) == 1
 
-    def test_филе_индейки_found_by_индейка(self, temp_db):
+    def test_search_by_phrase_ingredient(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("основное блюдо", "turkey", ["филе индейки"])
-        _link_recipe("pers_1", "основное блюдо", "turkey")
+        _save_and_link("pers_1", "основное блюдо", "turkey", "Индейка",
+                        ["филе индейки"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "индейка", "основное блюдо")
-        assert "turkey" in results
+        results = group_manager.search_recipes_fulltext("pers_1", "индейка")
+        assert len(results) == 1
+        assert results[0][1] == "turkey"
 
-    def test_куриная_грудка_found_by_курица(self, temp_db):
+    def test_search_by_title(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("основное блюдо", "chicken", ["куриная грудка"])
-        _link_recipe("pers_1", "основное блюдо", "chicken")
+        _save_and_link("pers_1", "десерт", "tiramisu", "Тирамису классический",
+                        ["маскарпоне", "кофе"])
 
-        # «курица» лемматизируется в «курица»; «куриная» → «куриный».
-        # Это разные леммы, поэтому запрос «курица» НЕ дожно находить «куриная грудка»
-        # (т.к. мы не делаем синонимический поиск).
-        # Это проверяет, что мы не выдаём ложных срабатываний.
-        results = group_manager.search_recipes_by_ingredient("pers_1", "курица", "основное блюдо")
-        assert "chicken" not in results
+        results = group_manager.search_recipes_fulltext("pers_1", "тирамису")
+        assert len(results) == 1
+        assert results[0][1] == "tiramisu"
 
-    def test_куриная_грудка_found_by_куриная(self, temp_db):
+    def test_search_by_step_text(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("основное блюдо", "chicken", ["куриная грудка"])
-        _link_recipe("pers_1", "основное блюдо", "chicken")
+        _save_and_link("pers_1", "основное блюдо", "pasta", "Паста карбонара",
+                        ["спагетти", "бекон", "яйца"],
+                        steps=["Отварите спагетти в подсоленной воде",
+                               "Обжарьте бекон на сковороде"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "куриная", "основное блюдо")
-        assert "chicken" in results
+        results = group_manager.search_recipes_fulltext("pers_1", "сковорода")
+        assert len(results) == 1
+        assert results[0][1] == "pasta"
 
-    def test_phrase_query_finds_recipe(self, temp_db):
+    def test_search_across_all_categories(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("основное блюдо", "chicken", ["куриная грудка"])
-        _link_recipe("pers_1", "основное блюдо", "chicken")
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["яйца"])
+        _save_and_link("pers_1", "десерт", "cake", "Торт", ["яйца", "мука"])
 
-        # «куриная грудка» → обе леммы должны присутствовать
-        results = group_manager.search_recipes_by_ingredient("pers_1", "куриная грудка", "основное блюдо")
-        assert "chicken" in results
+        results = group_manager.search_recipes_fulltext("pers_1", "яйца")
+        assert len(results) == 2
 
-    def test_wrong_category_excludes(self, temp_db):
+    def test_search_no_results(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("завтрак", "omlet", ["10 яиц"])
-        _link_recipe("pers_1", "завтрак", "omlet")
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["яйца"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "яйца", "десерт")
+        results = group_manager.search_recipes_fulltext("pers_1", "лосось")
         assert results == []
 
-    def test_digit_only_query_returns_empty(self, temp_db):
+    def test_search_match_exact_lemma(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("завтрак", "omlet", ["10 яиц"])
-        _link_recipe("pers_1", "завтрак", "omlet")
+        _save_and_link("pers_1", "основное блюдо", "chicken", "Курица",
+                        ["куриная грудка"])
 
-        results = group_manager.search_recipes_by_ingredient("pers_1", "10", "завтрак")
+        results = group_manager.search_recipes_fulltext("pers_1", "куриная")
+        assert len(results) == 1
+
+    def test_search_phrase_requires_all_lemmas(self, temp_db):
+        _setup_group()
+        _save_and_link("pers_1", "основное блюдо", "chicken", "Курица",
+                        ["куриная грудка"])
+
+        results = group_manager.search_recipes_fulltext("pers_1", "куриная грудка")
+        assert len(results) == 1
+
+    def test_search_digit_only_returns_empty(self, temp_db):
+        _setup_group()
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["10 яиц"])
+
+        results = group_manager.search_recipes_fulltext("pers_1", "10")
         assert results == []
 
-    def test_empty_query_returns_empty(self, temp_db):
+    def test_search_empty_query_returns_empty(self, temp_db):
         _setup_group()
-        group_manager.index_recipe_ingredients("завтрак", "omlet", ["10 яиц"])
+        _save_and_link("pers_1", "завтрак", "omlet", "Омлет", ["яйца"])
 
-        assert group_manager.search_recipes_by_ingredient("pers_1", "", "завтрак") == []
-        assert group_manager.search_recipes_by_ingredient("pers_1", "   ", "завтрак") == []
+        assert group_manager.search_recipes_fulltext("pers_1", "") == []
+        assert group_manager.search_recipes_fulltext("pers_1", "   ") == []
+
+    def test_search_only_recipes_in_group(self, temp_db):
+        _setup_group()
+        with group_manager.db.connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
+                ("pers_2", "Other", 2),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
+                ("pers_2", 2),
+            )
+
+        _save_and_link("pers_1", "завтрак", "omlet1", "Омлет 1", ["яйца"])
+        _save_and_link("pers_1", "завтрак", "omlet2", "Омлет 2", ["яйца", "молоко"])
+
+        results = group_manager.search_recipes_fulltext("pers_2", "яйца")
+        assert results == []
