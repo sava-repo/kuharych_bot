@@ -36,7 +36,7 @@ async def main() -> None:
     logger.info("Bot starting (long polling)...")
 
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, polling_timeout=30)
     finally:
         await bot.session.close()
         logger.info("Bot stopped")
