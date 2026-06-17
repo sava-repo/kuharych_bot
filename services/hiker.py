@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 import config
+from exceptions import VideoDownloadError
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,33 @@ async def _download_file(client: httpx.AsyncClient, url: str, filepath: Path) ->
     return total
 
 
+def _extract_video_url(data: dict) -> str:
+    """Извлекает URL видео из ответа HikerAPI (Reels, Posts, Carousels)."""
+    video_url = data.get("video_url", "")
+    if video_url:
+        return video_url
+
+    def _best_url(versions: list[dict]) -> str:
+        valid = [v for v in versions if v.get("url")]
+        if not valid:
+            return ""
+        return max(valid, key=lambda v: v.get("width", 0))["url"]
+
+    versions = data.get("video_versions")
+    if versions:
+        url = _best_url(versions)
+        if url:
+            return url
+
+    for resource in data.get("resources", []):
+        if resource.get("media_type") == 2:
+            url = _best_url(resource.get("video_versions", []))
+            if url:
+                return url
+
+    raise VideoDownloadError("Видео не найдено в ответе API")
+
+
 async def download_reel(url: str, message_id: int) -> tuple[str, str | None]:
     """
     Скачивает Instagram Reel по URL через HikerAPI.
@@ -66,7 +94,7 @@ async def download_reel(url: str, message_id: int) -> tuple[str, str | None]:
 
         # Извлекаем поля
         caption = data.get("caption_text", "") or None
-        video_url = data.get("video_url", "")
+        video_url = _extract_video_url(data)
         shortcode = data.get("code", "unknown")
         username = data.get("user", {}).get("username", "unknown")
         full_name = data.get("user", {}).get("full_name", "")
@@ -75,12 +103,6 @@ async def download_reel(url: str, message_id: int) -> tuple[str, str | None]:
             f"HikerAPI: got info — author: {full_name} (@{username}), "
             f"shortcode: {shortcode}, caption: {len(caption) if caption else 0} chars"
         )
-
-        if not video_url:
-            raise RuntimeError(
-                f"HikerAPI: video_url не найден в ответе API. "
-                f"Ключи: {list(data.keys())}"
-            )
 
         # Скачиваем видео
         output_path = TEMP_DIR / f"{message_id}.mp4"

@@ -41,7 +41,11 @@ class TestTranscriberLiveApi:
                 transcriber.extract_audio,
                 str(test_audio_path)
             )
-            
+
+            if wav_path is None:
+                print("⚠️ Test audio file has no audio track")
+                pytest.skip("Test audio file has no audio track")
+
             print(f"✅ Audio extracted to: {wav_path}")
             
             # Transcribe
@@ -163,11 +167,11 @@ class TestTranscriberDocumentation:
         - ffmpeg binary (provided by imageio-ffmpeg)
         - Test audio file in fixtures directory
         
-        Expected Behavior:
-        - Successful transcription returns Russian text
-        - Videos without audio track raise RuntimeError
-        - Missing GROQ_API_KEY raises RuntimeError
-        - Non-existent files raise RuntimeError
+         Expected Behavior:
+         - Successful transcription returns Russian text
+         - Videos without audio track: extract_audio returns None, transcribe returns ""
+         - Missing GROQ_API_KEY raises RuntimeError
+         - Non-existent files raise RuntimeError
         """
         print("✅ Test documentation verified")
         print("   Test audio file: tests/fixtures/test_audio.mp3")

@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def extract_audio(video_path: str) -> str:
+def extract_audio(video_path: str) -> str | None:
     """
     Извлекает аудио из видео в WAV 16kHz mono.
-    Возвращает путь к WAV файлу.
+    Возвращает путь к WAV файлу или None, если аудиодорожки нет.
     """
     wav_path = video_path.rsplit(".", 1)[0] + ".wav"
 
@@ -45,9 +45,10 @@ def extract_audio(video_path: str) -> str:
 
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr}")
-        # Видео без аудиодорожки
+        # Видео без аудиодорожки — сигнализируем None, прочие ошибки поднимаем
         if "does not contain any stream" in result.stderr:
-            raise RuntimeError("Не удалось распознать речь: видео не содержит аудиодорожку")
+            logger.info("Video has no audio track")
+            return None
         raise RuntimeError(f"ffmpeg failed: {result.stderr[:200]}")
 
     logger.info(f"Audio extracted: {wav_path}")
@@ -100,6 +101,10 @@ async def transcribe(video_path: str) -> str:
     """
     # ffmpeg — sync, запускаем в отдельном потоке
     wav_path = await asyncio.to_thread(extract_audio, video_path)
+    if wav_path is None:
+        # Нет аудиодорожки — трактуем как пустую транскрипцию,
+        # чтобы пайплайн единообразно сделал fallback на описание
+        return ""
     try:
         text = await transcribe_audio(wav_path)
     finally:

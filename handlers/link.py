@@ -16,6 +16,7 @@ from exceptions import (
     RecipeParseError,
     SpeechNotRecognizedError,
     StorageUnavailableError,
+    VideoDownloadError,
 )
 from services.recipe_pipeline import process_video
 from handlers.keyboards import MENU_KEYBOARD, duplicate_keyboard, recipe_keyboard
@@ -70,6 +71,8 @@ def _error_message(exc: Exception) -> str:
         return "🍳 Видео не содержит рецепт. Попробуйте другой рилс"
     if isinstance(exc, StorageUnavailableError):
         return "🗃 База рецептов временно недоступна. Попробуйте позже"
+    if isinstance(exc, VideoDownloadError):
+        return "❌ Не удалось получить видео. Возможно, это фото или карусель без видео. Пришлите ссылку на Reels"
     if isinstance(exc, RecipeParseError):
         return "❌ Не удалось извлечь рецепт из видео"
     error_text = str(exc)
