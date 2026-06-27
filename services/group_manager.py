@@ -839,32 +839,73 @@ def get_all_recipe_slugs() -> list[tuple[int, str]]:
 
 # ── Полнотекстовый поиск ──────────────────────────────────────────────
 
-def search_recipes_fulltext(group_id: str, query: str) -> list[tuple[int, str, str]]:
+def search_recipes_fulltext(
+    group_ids: str | list[str],
+    query: str,
+    *,
+    prefer_group_id: str | None = None,
+) -> list[tuple[int, str, str, str]]:
     """Ищет рецепты по всему тексту (название + ингредиенты + шаги).
 
-    Возвращает список (recipe_id, slug, title) без ограничения по категории.
+    Поиск ведётся сразу по нескольким группам пользователя, чтобы смена
+    активной группы не прятала рецепты, добавленные в другую группу.
+
+    Возвращает список уникальных кортежей
+    ``(recipe_id, slug, title, group_id)`` с дедупом по ``recipe_id``: если
+    рецепт есть в нескольких из указанных групп, предпочтение отдаётся
+    ``prefer_group_id`` (обычно активной группе), иначе — первой найденной.
+    Результат сортируется по названию.
+
+    ``group_ids`` принимает как одиночный id, так и список (одиночная строка
+    нормализуется к списку — обратная совместимость).
+
     Поиск морфологически устойчив через лемматизацию pymorphy.
     """
     if not query or not query.strip():
+        return []
+
+    if isinstance(group_ids, str):
+        group_ids = [group_ids]
+    group_ids = [g for g in group_ids if g]
+    if not group_ids:
         return []
 
     query_lemmas = lemmatizer.lemmatize_text(query)
     if not query_lemmas:
         return []
 
-    where_clauses = " AND ".join(["r.full_text_lemmas LIKE ?"] * len(query_lemmas))
-    params = [f"%{lemma}%" for lemma in query_lemmas] + [group_id]
+    lemma_clauses = " AND ".join(["r.full_text_lemmas LIKE ?"] * len(query_lemmas))
+    group_placeholders = ", ".join(["?"] * len(group_ids))
+    params = [f"%{lemma}%" for lemma in query_lemmas] + group_ids
 
     sql = f"""
-        SELECT r.recipe_id, r.slug, r.title
+        SELECT r.recipe_id, r.slug, r.title, gr.group_id
         FROM recipes r
         INNER JOIN group_recipes gr
             ON gr.recipe_id = r.recipe_id
-        WHERE {where_clauses}
-          AND gr.group_id = ?
-        ORDER BY r.title
+        WHERE {lemma_clauses}
+          AND gr.group_id IN ({group_placeholders})
     """
 
     with db.connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-        return [(r["recipe_id"], r["slug"], r["title"]) for r in rows]
+
+    # Дедуп по recipe_id: prefer активной группы, иначе первая найденная.
+    seen: dict[int, tuple[int, str, str, str]] = {}
+    for r in rows:
+        rid = r["recipe_id"]
+        gid = r["group_id"]
+        entry = (rid, r["slug"], r["title"], gid)
+        existing = seen.get(rid)
+        if existing is None:
+            seen[rid] = entry
+        elif (
+            prefer_group_id is not None
+            and existing[3] != prefer_group_id
+            and gid == prefer_group_id
+        ):
+            seen[rid] = entry
+
+    results = list(seen.values())
+    results.sort(key=lambda x: x[2])
+    return results

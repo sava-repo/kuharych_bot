@@ -158,11 +158,14 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
         return
 
     user_id = message.from_user.id
-    group_id = gm.get_user_active_group(user_id)
+    active_group_id = gm.get_user_active_group(user_id)
+    group_ids = [g.group_id for g in gm.get_user_groups(user_id)]
 
     await state.clear()
 
-    results = gm.search_recipes_fulltext(group_id, query)
+    results = gm.search_recipes_fulltext(
+        group_ids, query, prefer_group_id=active_group_id
+    )
 
     if not results:
         await message.answer(f"📭 По запросу «{query}» ничего не найдено")
@@ -175,12 +178,11 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
     cache_key = cache.put({
         "results": results,
         "query": query,
-        "group_id": group_id,
     })
 
     recipe_ids = []
-    for rid, slug, title in page_results:
-        rkey = cache.put_recipe(rid, group_id)
+    for rid, slug, title, recipe_group_id in page_results:
+        rkey = cache.put_recipe(rid, recipe_group_id)
         recipe_ids.append(rkey)
 
     text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
@@ -212,8 +214,8 @@ async def handle_search_page(callback: CallbackQuery) -> None:
     page_results = results[page * SEARCH_PAGE_SIZE:(page + 1) * SEARCH_PAGE_SIZE]
 
     recipe_ids = []
-    for rid, slug, title in page_results:
-        rkey = cache.put_recipe(rid, cached["group_id"])
+    for rid, slug, title, recipe_group_id in page_results:
+        rkey = cache.put_recipe(rid, recipe_group_id)
         recipe_ids.append(rkey)
 
     text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
@@ -224,7 +226,7 @@ async def handle_search_page(callback: CallbackQuery) -> None:
 
 def _format_search_results(
     query: str,
-    page_results: list[tuple[int, str, str]],
+    page_results: list[tuple[int, str, str, str]],
     recipe_ids: list[int],
     page: int,
     total_pages: int,
@@ -232,7 +234,7 @@ def _format_search_results(
     """Форматирует страницу результатов поиска."""
     lines = [f"🔎 Результаты поиска «{query}»:\n"]
 
-    for i, (rid, slug, title) in enumerate(page_results):
+    for i, (rid, slug, title, group_id) in enumerate(page_results):
         rkey = recipe_ids[i]
         lines.append(f"{title}")
         lines.append(f"Открыть: /open{rkey}")

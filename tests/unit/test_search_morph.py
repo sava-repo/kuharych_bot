@@ -153,6 +153,68 @@ class TestSearchFulltext:
         assert results == []
 
 
+class TestSearchAcrossUserGroups:
+    """Поиск по всем группам пользователя + дедуп с prefer активной группы."""
+
+    def test_finds_recipe_in_non_active_group(self, temp_db):
+        _setup_group("pers_1", 1)
+        other = group_manager.create_custom_group("Мои рецепты", 1)
+
+        # Рецепт добавлен в «другую» группу пользователя, активная — личная
+        _save_and_link(other.group_id, "десерт", "tvorozhnik",
+                       "Творожник", ["творог"], user_id=1)
+
+        results = group_manager.search_recipes_fulltext(
+            ["pers_1", other.group_id], "творог", prefer_group_id="pers_1"
+        )
+        assert len(results) == 1
+        assert results[0][1] == "tvorozhnik"
+        # Рецепт найден в «другой» группе (в активной его нет)
+        assert results[0][3] == other.group_id
+
+    def test_dedup_prefers_active_group(self, temp_db):
+        _setup_group("pers_1", 1)
+        other = group_manager.create_custom_group("Мои рецепты", 1)
+
+        # Один и тот же рецепт привязан к обеим группам пользователя
+        rid = _save_and_link("pers_1", "десерт", "tvorozhnyy-keks",
+                             "Творожный кекс", ["творог"], user_id=1)
+        group_manager.add_recipe_to_group(
+            other.group_id, rid,
+            group_manager.get_default_category_id(other.group_id),
+            user_id=1,
+        )
+
+        # Prefer личной (активной) группы
+        res1 = group_manager.search_recipes_fulltext(
+            ["pers_1", other.group_id], "творог", prefer_group_id="pers_1"
+        )
+        assert len(res1) == 1
+        assert res1[0][0] == rid
+        assert res1[0][3] == "pers_1"
+
+        # Prefer «другой» группы
+        res2 = group_manager.search_recipes_fulltext(
+            [other.group_id, "pers_1"], "творог", prefer_group_id=other.group_id
+        )
+        assert len(res2) == 1
+        assert res2[0][3] == other.group_id
+
+    def test_does_not_leak_to_unrelated_user(self, temp_db):
+        _setup_group("pers_1", 1)
+        _setup_group("pers_2", 2)
+        other2 = group_manager.create_custom_group("Кухня 2", 2)
+
+        _save_and_link("pers_1", "десерт", "tvorozhnik",
+                       "Творожник", ["творог"], user_id=1)
+
+        # Пользователь 2 ищет только по своим группам — чужого рецепта нет
+        results = group_manager.search_recipes_fulltext(
+            ["pers_2", other2.group_id], "творог"
+        )
+        assert results == []
+
+
 class TestCategoryIsolation:
     """Один рецепт в разных категориях у разных групп; перемещение изолировано."""
 
