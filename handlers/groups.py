@@ -133,6 +133,7 @@ async def handle_grp_select(callback: CallbackQuery) -> None:
     text = f"{'📁' if group.is_personal else '👥'} **{group.name}**\n\n"
     text += f"{'✅ Активна' if is_active else 'Неактивна'}\n"
     text += f"Участников: {len(group.members)}\n"
+    text += f"Рецептов: {len(gm.get_group_recipes(group_id))}\n"
     if group.invite_code and is_owner:
         text += f"Инвайт-код: `{group.invite_code}`\n"
 
