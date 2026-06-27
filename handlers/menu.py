@@ -36,6 +36,66 @@ def _parse_category(text: str) -> str | None:
     return MENU_BUTTON_TO_CATEGORY.get(text)
 
 
+# ── Выбор случайного рецепта ───────────────────────────────────────────
+
+def _pick_random_recipe(user_id: int, group_id: str, category: str) -> dict | None:
+    """Выбирает случайный валидный рецепт с учётом rotation.
+
+    Возвращает {recipe, source_url, rk, cc} или None, если в категории нет
+    ни одного рецепта с контентом. Фильтрует «осиротевшие» slug'и (есть в
+    group_recipes, но отсутствуют в recipes) и логирует их. rotation
+    обновляется только после успешной загрузки рецепта (design rotation §5).
+    """
+    all_slugs = gm.get_group_recipes_by_category(group_id, category)
+    if not all_slugs:
+        return None
+
+    pairs = [(s, gm.get_recipe(category, s)) for s in all_slugs]
+    valid = [(s, data) for s, data in pairs if data]
+    orphans = [s for s, data in pairs if not data]
+    if orphans:
+        logger.warning(
+            "Orphan recipe slugs skipped (missing in recipes): "
+            "group=%s category=%s slugs=%s",
+            group_id, category, orphans,
+        )
+    if not valid:
+        return None
+
+    excluded = set(rotation.get_excluded(user_id, category))
+    candidates = [p for p in valid if p[0] not in excluded] or valid
+
+    slug, recipe_data = random.choice(candidates)
+    rotation.add(user_id, category, slug, len(valid))
+
+    recipe = Recipe.from_markdown(
+        recipe_data["content_md"], category, recipe_data["source"]
+    )
+    return {
+        "recipe": recipe,
+        "source_url": gm.find_source_by_slug(category, slug),
+        "rk": cache.put_recipe(category, slug),
+        "cc": category_to_code(category),
+    }
+
+
+def _random_recipe_markup(result: dict):
+    """Inline-клавиатура для сообщения со случайным рецептом."""
+    cc = result["cc"]
+    rk = result["rk"]
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
+
+    source_url = result["source_url"]
+    if source_url:
+        builder.button(text="▶️ Посмотреть", url=source_url)
+
+    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
+    builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
+    return builder.as_markup()
+
+
 # ── Хэндлеры категорий ─────────────────────────────────────────────────
 
 @router.message(F.text.in_(["🌅 Завтрак", "🍽 Основное блюдо", "🍰 Десерт"]))
@@ -47,8 +107,8 @@ async def handle_menu_category(message: Message) -> None:
     if not category:
         return
 
-    group_slugs = gm.get_group_recipes_by_category(group_id, category)
-    if not group_slugs:
+    result = _pick_random_recipe(user_id, group_id, category)
+    if not result:
         group = gm.get_group(group_id)
         group_name = group.name if group else "Неизвестная"
         await message.answer(
@@ -57,40 +117,9 @@ async def handle_menu_category(message: Message) -> None:
         )
         return
 
-    excluded = rotation.get_excluded(user_id, category)
-    filtered = [s for s in group_slugs if s not in set(excluded)]
-    candidates = filtered if filtered else group_slugs
-
-    slug = random.choice(candidates)
-    rotation.add(user_id, category, slug, len(group_slugs))
-
-    recipe_data = gm.get_recipe(category, slug)
-    if not recipe_data:
-        logger.warning(
-            "Recipe not found in DB: category=%s, slug=%s, group_id=%s, user_id=%s",
-            category, slug, group_id, user_id,
-        )
-        await message.answer("📭 Не удалось загрузить рецепт. Попробуйте снова")
-        return
-
-    recipe = Recipe.from_markdown(recipe_data["content_md"], category, recipe_data["source"])
-    rk = cache.put_recipe(category, slug)
-    cc = category_to_code(category)
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
-
-    source_url = gm.find_source_by_slug(category, slug)
-    if source_url:
-        builder.button(text="▶️ Посмотреть", url=source_url)
-
-    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
-    builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
-
     await message.answer(
-        f"🎲 Случайный рецепт:\n\n{recipe.format_message()}",
-        reply_markup=builder.as_markup(),
+        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message()}",
+        reply_markup=_random_recipe_markup(result),
     )
 
 
@@ -110,44 +139,14 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
 
     await callback.answer()
 
-    group_slugs = gm.get_group_recipes_by_category(group_id, category)
-    if not group_slugs:
+    result = _pick_random_recipe(user_id, group_id, category)
+    if not result:
         await callback.message.edit_text(f"📭 Пока нет рецептов в категории «{category}»")
         return
 
-    excluded = rotation.get_excluded(user_id, category)
-    filtered = [s for s in group_slugs if s not in set(excluded)]
-    candidates = filtered if filtered else group_slugs
-
-    slug = random.choice(candidates)
-    rotation.add(user_id, category, slug, len(group_slugs))
-
-    recipe_data = gm.get_recipe(category, slug)
-    if not recipe_data:
-        logger.warning(
-            "Recipe not found in DB: category=%s, slug=%s, group_id=%s, user_id=%s",
-            category, slug, group_id, user_id,
-        )
-        await callback.message.edit_text("📭 Не удалось загрузить рецепт. Попробуйте снова")
-        return
-
-    recipe = Recipe.from_markdown(recipe_data["content_md"], category, recipe_data["source"])
-    rk = cache.put_recipe(category, slug)
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
-
-    source_url = gm.find_source_by_slug(category, slug)
-    if source_url:
-        builder.button(text="▶️ Посмотреть", url=source_url)
-
-    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
-    builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
-
     await callback.message.edit_text(
-        f"🎲 Случайный рецепт:\n\n{recipe.format_message()}",
-        reply_markup=builder.as_markup(),
+        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message()}",
+        reply_markup=_random_recipe_markup(result),
     )
 
 
