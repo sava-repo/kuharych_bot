@@ -8,6 +8,7 @@ class User:
     """Пользователь бота"""
     user_id: int
     active_group: str = ""  # ID текущей активной группы
+    registered_at: str | None = None  # ISO-8601 дата регистрации
 
 
 @dataclass

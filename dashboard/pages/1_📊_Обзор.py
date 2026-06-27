@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from lib import check_db, db_path, get_connection, run_query
+from lib import check_db, db_path, get_connection, get_usernames, run_query
 
 st.set_page_config(page_title="Обзор · Кулинарыч", page_icon="📊", layout="wide")
 st.title("📊 Обзор")
@@ -156,12 +156,19 @@ users_groups = run_query(
     """,
 )
 
+usernames = get_usernames()
+
 if users_groups.empty:
     st.info("В БД ещё нет пользователей.")
 else:
+    users_groups["username"] = users_groups["user_id"].map(usernames).fillna("—")
     st.dataframe(
-        users_groups.rename(
-            columns={"user_id": "User ID", "groups": "Состоит в группах"}
+        users_groups[["username", "user_id", "groups"]].rename(
+            columns={
+                "username": "Username",
+                "user_id": "User ID",
+                "groups": "Состоит в группах",
+            }
         ),
         hide_index=True,
         use_container_width=True,

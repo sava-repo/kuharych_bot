@@ -70,6 +70,17 @@ def recipe_keyboard(
     return builder.as_markup()
 
 
+def confirm_delete_keyboard(cc: str, rk) -> InlineKeyboardMarkup:
+    """
+    Клавиатура подтверждения удаления рецепта (Да / Нет).
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Да", callback_data=f"delok:{cc}:{rk}")
+    builder.button(text="Нет", callback_data=f"delcn:{cc}:{rk}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def duplicate_keyboard(
     category: str,
     slug: str,

@@ -6,7 +6,7 @@ import sqlite3
 
 import streamlit as st
 
-from lib import check_db, db_path, get_connection, run_query
+from lib import check_db, clear_usernames_cache, db_path, get_connection, get_usernames, run_query
 
 st.set_page_config(page_title="Группы · Кулинарыч", page_icon="👥", layout="wide")
 st.title("👥 Группы")
@@ -15,6 +15,13 @@ if not check_db():
     st.stop()
 
 conn: sqlite3.Connection = get_connection(str(db_path()))
+
+# ─── Username-ы из Telegram (кэш на жизнь процесса) ────────────────────────
+usernames = get_usernames()
+
+if st.button("🔄 Обновить username-ы", help="Перезапросить username-ы через Telegram Bot API"):
+    clear_usernames_cache()
+    st.rerun()
 
 
 # ─── Общая таблица групп ───────────────────────────────────────────────────
@@ -40,12 +47,26 @@ if groups_df.empty:
     st.info("В БД ещё нет групп.")
     st.stop()
 
+groups_df["owner_username"] = groups_df["owner_id"].map(usernames).fillna("—")
+
 st.dataframe(
-    groups_df.rename(
+    groups_df[
+        [
+            "group_id",
+            "name",
+            "owner_id",
+            "owner_username",
+            "invite_code",
+            "members",
+            "recipes",
+            "type",
+        ]
+    ].rename(
         columns={
             "group_id": "ID",
             "name": "Название",
-            "owner_id": "Владелец",
+            "owner_id": "Владелец (ID)",
+            "owner_username": "Владелец",
             "invite_code": "Инвайт",
             "members": "Участников",
             "recipes": "Рецептов",
@@ -86,8 +107,15 @@ with col_members:
         """,
         (selected_group_id,),
     )
+    members_df["username"] = members_df["user_id"].map(usernames).fillna("—")
     st.dataframe(
-        members_df.rename(columns={"user_id": "User ID", "status": "Статус"}),
+        members_df[["user_id", "username", "status"]].rename(
+            columns={
+                "user_id": "User ID",
+                "username": "Username",
+                "status": "Статус",
+            }
+        ),
         hide_index=True,
         use_container_width=True,
     )

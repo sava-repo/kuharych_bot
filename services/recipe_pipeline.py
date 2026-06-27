@@ -64,7 +64,7 @@ async def process_video(
     try:
         existing = gm.find_recipe_by_source(url)
         if existing:
-            result = await _handle_existing_recipe(existing, group_id, url)
+            result = await _handle_existing_recipe(existing, group_id, url, user_id)
             if result is not None:
                 return result
 
@@ -93,7 +93,7 @@ async def process_video(
 
         if duplicate:
             gm.register_source(url, recipe.category, recipe.slug)
-            gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
+            gm.add_recipe_to_group(group_id, recipe.category, recipe.slug, user_id)
             return PipelineResult(recipe, {"category": recipe.category, "slug": recipe.slug}, clean_url, True)
 
         gm.save_recipe(
@@ -107,7 +107,7 @@ async def process_video(
         )
 
         gm.register_source(url, recipe.category, recipe.slug)
-        gm.add_recipe_to_group(group_id, recipe.category, recipe.slug)
+        gm.add_recipe_to_group(group_id, recipe.category, recipe.slug, user_id)
 
         return PipelineResult(recipe, None, clean_url, True)
 
@@ -117,7 +117,7 @@ async def process_video(
 
 
 async def _handle_existing_recipe(
-    existing: dict, group_id: str, url: str
+    existing: dict, group_id: str, url: str, user_id: int
 ) -> PipelineResult | None:
     """
     Обрабатывает случай, когда рецепт с таким reel ID уже существует.
@@ -138,7 +138,7 @@ async def _handle_existing_recipe(
         recipe = Recipe.from_markdown(recipe_data["content_md"], category, clean_url)
         return PipelineResult(recipe, None, clean_url, False)
 
-    gm.add_recipe_to_group(group_id, category, slug)
+    gm.add_recipe_to_group(group_id, category, slug, user_id)
     recipe_data = gm.get_recipe(category, slug)
     if not recipe_data:
         logger.warning(

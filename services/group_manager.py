@@ -6,6 +6,7 @@
 
 import logging
 import secrets
+from datetime import datetime, timezone
 
 from models.group import Group, User
 from models.recipe import Recipe
@@ -17,28 +18,42 @@ logger = logging.getLogger(__name__)
 db = Database.get_instance()
 
 
+def _now_iso() -> str:
+    """Текущее UTC-время в ISO-8601 (единый формат для timestamp-колонок)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ── Пользователи ──────────────────────────────────────────────────────
 
 def _ensure_user(user_id: int) -> User:
     """Загружает пользователя, при отсутствии создаёт с личной группой."""
     with db.connect() as conn:
         row = conn.execute(
-            "SELECT active_group FROM users WHERE user_id = ?", (user_id,)
+            "SELECT active_group, registered_at FROM users WHERE user_id = ?", (user_id,)
         ).fetchone()
 
         if row:
-            return User(user_id=user_id, active_group=row["active_group"])
+            return User(
+                user_id=user_id,
+                active_group=row["active_group"],
+                registered_at=row["registered_at"],
+            )
 
         personal_group_id = f"pers_{user_id}"
         _create_group_with_conn(conn, personal_group_id, "Личные рецепты", user_id, members=[user_id])
 
+        registered_at = _now_iso()
         conn.execute(
-            "INSERT INTO users (user_id, active_group) VALUES (?, ?)",
-            (user_id, personal_group_id),
+            "INSERT INTO users (user_id, active_group, registered_at) VALUES (?, ?, ?)",
+            (user_id, personal_group_id, registered_at),
         )
 
         logger.info("Created new user %s with personal group %s", user_id, personal_group_id)
-        return User(user_id=user_id, active_group=personal_group_id)
+        return User(
+            user_id=user_id,
+            active_group=personal_group_id,
+            registered_at=registered_at,
+        )
 
 
 def get_user_active_group(user_id: int) -> str:
@@ -58,8 +73,8 @@ def set_user_active_group(user_id: int, group_id: str) -> bool:
             personal_group_id = f"pers_{user_id}"
             _create_group_with_conn(conn, personal_group_id, "Личные рецепты", user_id, members=[user_id])
             conn.execute(
-                "INSERT INTO users (user_id, active_group) VALUES (?, ?)",
-                (user_id, personal_group_id),
+                "INSERT INTO users (user_id, active_group, registered_at) VALUES (?, ?, ?)",
+                (user_id, personal_group_id, _now_iso()),
             )
             logger.info("Created user %s during group switch", user_id)
 
@@ -281,12 +296,20 @@ def rename_group(group_id: str, owner_id: int, new_name: str) -> bool:
 
 # ── Связи группа↔рецепт ──────────────────────────────────────────────
 
-def add_recipe_to_group(group_id: str, category: str, slug: str) -> None:
-    """Добавляет рецепт в коллекцию группы."""
+def add_recipe_to_group(
+    group_id: str, category: str, slug: str, user_id: int
+) -> None:
+    """Добавляет рецепт в коллекцию группы.
+
+    Фиксирует дату добавления (added_at) и автора (user_id).
+    Повторное добавление игнорируется (INSERT OR IGNORE) — дата/автор
+    первого добавившего сохраняются.
+    """
     with db.connect() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO group_recipes (group_id, category, slug) VALUES (?, ?, ?)",
-            (group_id, category, slug),
+            "INSERT OR IGNORE INTO group_recipes "
+            "(group_id, category, slug, added_at, added_by_user_id) VALUES (?, ?, ?, ?, ?)",
+            (group_id, category, slug, _now_iso(), user_id),
         )
 
 

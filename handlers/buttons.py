@@ -7,10 +7,12 @@ from aiogram.types import CallbackQuery
 
 import services.group_manager as gm
 import services.cache as cache
-from constants import code_to_category
+from constants import code_to_category, category_to_code
+from models.recipe import Recipe
 from handlers.keyboards import (
     recipe_keyboard,
     category_select_keyboard,
+    confirm_delete_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,30 @@ def _resolve_cached(callback: CallbackQuery, parts_count: int) -> tuple[tuple[st
 
 @router.callback_query(F.data.startswith("del:"))
 async def handle_delete(callback: CallbackQuery) -> None:
-    """Удаление рецепта из текущей группы"""
+    """Шаг 1: показ диалога подтверждения удаления рецепта"""
+    result = _resolve_cached(callback, 3)
+    if not result:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    (_, rk), cached = result
+    category = cached["category"]
+    slug = cached["slug"]
+
+    recipe_data = gm.get_recipe(category, slug)
+    name = (recipe_data["title"] if recipe_data else None) or slug
+    cc = category_to_code(category)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        f"Вы действительно хотите удалить рецепт «{name}»?",
+        reply_markup=confirm_delete_keyboard(cc, rk),
+    )
+
+
+@router.callback_query(F.data.startswith("delok:"))
+async def handle_delete_confirm(callback: CallbackQuery) -> None:
+    """Шаг 2 (подтверждение): реальное удаление рецепта из текущей группы"""
     user_id = callback.from_user.id
     result = _resolve_cached(callback, 3)
     if not result:
@@ -72,6 +97,38 @@ async def handle_delete(callback: CallbackQuery) -> None:
     except Exception as e:
         logger.error("Delete error: %s", e, exc_info=True)
         await callback.message.edit_text("❌ Не удалось удалить рецепт. Попробуйте позже")
+
+
+@router.callback_query(F.data.startswith("delcn:"))
+async def handle_delete_cancel(callback: CallbackQuery) -> None:
+    """Шаг 2 (отмена): возврат к просмотру рецепта"""
+    result = _resolve_cached(callback, 3)
+    if not result:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    (_, rk), cached = result
+    category = cached["category"]
+    slug = cached["slug"]
+
+    await callback.answer()
+    await _restore_recipe_view(callback, category, slug)
+
+
+async def _restore_recipe_view(callback: CallbackQuery, category: str, slug: str) -> None:
+    """Восстанавливает сообщение с рецептом и стандартной клавиатурой."""
+    recipe_data = gm.get_recipe(category, slug)
+    if not recipe_data:
+        await callback.message.edit_text("❌ Рецепт не найден")
+        return
+
+    recipe = Recipe.from_markdown(recipe_data["content_md"], category, recipe_data["source"])
+    source_url = gm.find_source_by_slug(category, slug)
+
+    await callback.message.edit_text(
+        recipe.format_message(),
+        reply_markup=recipe_keyboard(category, slug, source_url=source_url),
+    )
 
 
 # ── Перезапись рецепта ─────────────────────────────────────────────────
@@ -131,7 +188,7 @@ async def handle_save_new(callback: CallbackQuery) -> None:
     try:
         new_slug = gm.save_recipe_as_new(recipe)
 
-        gm.add_recipe_to_group(group_id, recipe.category, new_slug)
+        gm.add_recipe_to_group(group_id, recipe.category, new_slug, user_id)
 
         await callback.message.edit_text(
             f"✅ Рецепт сохранён как «{new_slug}»",

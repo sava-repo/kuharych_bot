@@ -46,7 +46,8 @@ class Database:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
-                    active_group TEXT NOT NULL
+                    active_group TEXT NOT NULL,
+                    registered_at TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS groups (
@@ -66,6 +67,8 @@ class Database:
                     group_id TEXT NOT NULL,
                     category TEXT NOT NULL,
                     slug TEXT NOT NULL,
+                    added_at TEXT,
+                    added_by_user_id INTEGER,
                     PRIMARY KEY (group_id, category, slug)
                 );
 
@@ -94,6 +97,24 @@ class Database:
                     PRIMARY KEY (category, slug)
                 );
             """)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Idempotent-миграции: добавляет недостающие колонки в существующие таблицы."""
+        user_cols = self._table_columns(conn, "users")
+        if "registered_at" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN registered_at TEXT")
+
+        gr_cols = self._table_columns(conn, "group_recipes")
+        if "added_at" not in gr_cols:
+            conn.execute("ALTER TABLE group_recipes ADD COLUMN added_at TEXT")
+        if "added_by_user_id" not in gr_cols:
+            conn.execute("ALTER TABLE group_recipes ADD COLUMN added_by_user_id INTEGER")
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        """Возвращает множество имён колонок таблицы."""
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
     def connect_raw(self) -> sqlite3.Connection:
         """Подключение без row_factory (для DDL и миграций)."""
