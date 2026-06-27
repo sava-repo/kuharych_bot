@@ -9,54 +9,47 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import services.cache as cache
 import services.group_manager as gm
-from constants import (
-    VALID_CATEGORIES,
-    category_to_code,
-)
 
 
 # ── Reply-клавиатуры ────────────────────────────────────────────────────
 
-MENU_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🌅 Завтрак")],
-        [KeyboardButton(text="🍽 Основное блюдо")],
-        [KeyboardButton(text="🍰 Десерт")],
-        [KeyboardButton(text="🔍 Поиск"), KeyboardButton(text="👥 Группы")],
-    ],
-    resize_keyboard=True,
-    one_time_keyboard=False,
-)
+
+def build_menu_keyboard(group_id: str) -> ReplyKeyboardMarkup:
+    """Динамическое меню: кнопки категорий активной группы + служебные."""
+    categories = gm.get_group_categories(group_id)
+    rows: list[list[KeyboardButton]] = []
+    for cat in categories:
+        rows.append([KeyboardButton(text=cat.name)])
+    rows.append([
+        KeyboardButton(text="🔍 Поиск"),
+        KeyboardButton(text="🗂 Категории"),
+    ])
+    rows.append([KeyboardButton(text="👥 Группы")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 # ── Inline-клавиатуры для рецептов ──────────────────────────────────────
 
 
 def recipe_keyboard(
-    category: str,
-    slug: str,
-    *,
+    recipe_id: int,
     group_id: str | None = None,
+    *,
     source_url: str | None = None,
     include_random: bool = False,
-    random_callback: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура под рецептом.
-    """
-    rk = cache.put_recipe(category, slug)
-    cc = category_to_code(category)
+    """Клавиатура под рецептом."""
+    rk = cache.put_recipe(recipe_id, group_id)
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
 
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
 
     if include_random:
-        rnd_cb = random_callback or f"rnd:{cc}"
-        builder.button(text="🎲 Другой рецепт", callback_data=rnd_cb)
+        builder.button(text="🎲 Другой рецепт", callback_data="rnd")
 
     if source_url and include_random:
         builder.adjust(3, 1)
@@ -70,61 +63,44 @@ def recipe_keyboard(
     return builder.as_markup()
 
 
-def confirm_delete_keyboard(cc: str, rk) -> InlineKeyboardMarkup:
-    """
-    Клавиатура подтверждения удаления рецепта (Да / Нет).
-    """
+def confirm_delete_keyboard(rk) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения удаления рецепта (Да / Нет)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="Да", callback_data=f"delok:{cc}:{rk}")
-    builder.button(text="Нет", callback_data=f"delcn:{cc}:{rk}")
+    builder.button(text="Да", callback_data=f"delok:{rk}")
+    builder.button(text="Нет", callback_data=f"delcn:{rk}")
     builder.adjust(2)
     return builder.as_markup()
 
 
-def duplicate_keyboard(
-    category: str,
-    slug: str,
-    recipe: object = None,
-) -> InlineKeyboardMarkup:
-    """
-    Клавиатура при обнаружении дубликата рецепта.
-    """
-    rk = cache.put({
-        "category": category,
-        "slug": slug,
-        "recipe": recipe,
-    })
-    cc = category_to_code(category)
+def duplicate_keyboard(recipe_id: int, recipe: object = None) -> InlineKeyboardMarkup:
+    """Клавиатура при обнаружении дубликата рецепта."""
+    rk = cache.put({"recipe_id": recipe_id, "recipe": recipe})
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Перезаписать", callback_data=f"ow:{cc}:{rk}")
-    builder.button(text="📝 Сохранить как новый", callback_data=f"sn:{cc}:{rk}")
+    builder.button(text="✏️ Перезаписать", callback_data=f"ow:{rk}")
+    builder.button(text="📝 Сохранить как новый", callback_data=f"sn:{rk}")
     builder.adjust(2)
 
-    return builder.as_markup()
+    return builder.as_markup
 
 
 def category_select_keyboard(
-    current_category: str,
+    group_id: str,
     rk,
-    prefix: str = "mov",
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура выбора категории (для перемещения рецепта).
-    """
-    current_cc = category_to_code(current_category)
+    """Клавиатура выбора категории для переноса рецепта."""
+    categories = gm.get_group_categories(group_id)
 
     builder = InlineKeyboardBuilder()
-    for cat in VALID_CATEGORIES:
-        if cat != current_category:
-            cc = category_to_code(cat)
-            builder.button(
-                text=cat.capitalize(),
-                callback_data=f"{prefix}:{cc}:{current_cc}:{rk}",
-            )
+    for cat in categories:
+        builder.button(
+            text=cat.name,
+            callback_data=f"mov:{cat.category_id}:{rk}",
+        )
+    builder.button(text="🔙 Отмена", callback_data=f"delcn:{rk}")
     builder.adjust(1)
 
-    return builder.as_markup()
+    return builder.as_markup
 
 
 def search_pagination_keyboard(
@@ -132,12 +108,7 @@ def search_pagination_keyboard(
     page: int,
     total: int,
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура пагинации для результатов поиска.
-
-    [« Назад] показывается только если page > 0.
-    [Вперед »] показывается только если есть ещё результаты.
-    """
+    """Клавиатура пагинации для результатов поиска."""
     builder = InlineKeyboardBuilder()
 
     has_prev = page > 0

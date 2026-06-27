@@ -19,22 +19,20 @@ conn: sqlite3.Connection = get_connection(str(db_path()))
 
 # ─── Таблица всех рецептов ─────────────────────────────────────────────────
 
-st.subheader("📚 Все рецепты (по category/slug)")
+st.subheader("📚 Все рецепты (по recipe_id)")
 
 recipes_df = run_query(
     conn,
     """
-    SELECT gr.category,
-           gr.slug,
+    SELECT r.recipe_id,
+           r.slug,
            r.title,
            COUNT(DISTINCT gr.group_id) AS groups_count,
            r.source
-    FROM (
-        SELECT DISTINCT category, slug, group_id FROM group_recipes
-    ) gr
-    LEFT JOIN recipes r ON r.category = gr.category AND r.slug = gr.slug
-    GROUP BY gr.category, gr.slug
-    ORDER BY groups_count DESC, gr.category, gr.slug
+    FROM recipes r
+    LEFT JOIN group_recipes gr ON gr.recipe_id = r.recipe_id
+    GROUP BY r.recipe_id
+    ORDER BY groups_count DESC, r.slug
     """,
 )
 
@@ -45,7 +43,7 @@ if recipes_df.empty:
 st.dataframe(
     recipes_df.rename(
         columns={
-            "category": "Категория",
+            "recipe_id": "ID",
             "slug": "Slug",
             "title": "Название",
             "groups_count": "В группах",
@@ -57,27 +55,41 @@ st.dataframe(
 )
 
 
-# ─── Фильтр по категории ───────────────────────────────────────────────────
+# ─── Категории групп ───────────────────────────────────────────────────────
 
 st.divider()
-st.subheader("📂 По категории")
+st.subheader("📂 Категории по группам")
 
-categories = sorted(recipes_df["category"].unique().tolist())
-selected_cat = st.selectbox("Категория", categories)
-
-cat_df = recipes_df[recipes_df["category"] == selected_cat].drop(columns=["category"])
-st.dataframe(
-    cat_df.rename(
-        columns={
-            "slug": "Slug",
-            "title": "Название",
-            "groups_count": "В группах",
-            "source": "Источник",
-        }
-    ),
-    hide_index=True,
-    use_container_width=True,
+cat_df = run_query(
+    conn,
+    """
+    SELECT g.name AS group_name,
+           gc.name AS category,
+           gc.is_default,
+           COUNT(gr.recipe_id) AS recipes
+    FROM group_categories gc
+    JOIN groups g ON g.group_id = gc.group_id
+    LEFT JOIN group_recipes gr ON gr.category_id = gc.category_id
+    GROUP BY gc.category_id
+    ORDER BY g.name, gc.position
+    """,
 )
+
+if cat_df.empty:
+    st.info("В БД ещё нет категорий.")
+else:
+    st.dataframe(
+        cat_df.rename(
+            columns={
+                "group_name": "Группа",
+                "category": "Категория",
+                "is_default": "По умолчанию",
+                "recipes": "Рецептов",
+            }
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 # ─── Детали выбранного рецепта ─────────────────────────────────────────────
@@ -86,30 +98,32 @@ st.divider()
 st.subheader("🔍 Детали рецепта")
 
 recipe_options = {
-    f"{row['category']} / {row['slug']}": (row["category"], row["slug"])
+    f"{row['title'] or row['slug']} (#{row['recipe_id']})": row["recipe_id"]
     for _, row in recipes_df.iterrows()
 }
 
 selected_label = st.selectbox("Выбери рецепт", list(recipe_options.keys()))
-selected_cat, selected_slug = recipe_options[selected_label]
+selected_id = recipe_options[selected_label]
 
 col_groups, col_ingredients = st.columns(2)
 
 with col_groups:
-    st.markdown("**В каких группах сохранён**")
+    st.markdown("**В каких группах / категориях сохранён**")
     in_groups = run_query(
         conn,
         """
-        SELECT g.group_id, g.name
+        SELECT g.name AS group_name,
+               gc.name AS category
         FROM group_recipes gr
         JOIN groups g ON g.group_id = gr.group_id
-        WHERE gr.category = ? AND gr.slug = ?
+        JOIN group_categories gc ON gc.category_id = gr.category_id
+        WHERE gr.recipe_id = ?
         ORDER BY g.name
         """,
-        (selected_cat, selected_slug),
+        (selected_id,),
     )
     st.dataframe(
-        in_groups.rename(columns={"group_id": "ID", "name": "Группа"}),
+        in_groups.rename(columns={"group_name": "Группа", "category": "Категория"}),
         hide_index=True,
         use_container_width=True,
     )
@@ -121,18 +135,11 @@ with col_ingredients:
         """
         SELECT ingredient
         FROM recipe_ingredients
-        WHERE category = ? AND slug = ?
+        WHERE recipe_id = ?
         ORDER BY ingredient
         """,
-        (selected_cat, selected_slug),
+        (selected_id,),
     )
-    recipe_title_row = run_query(
-        conn,
-        "SELECT title FROM recipes WHERE category = ? AND slug = ?",
-        (selected_cat, selected_slug),
-    )
-    if not recipe_title_row.empty:
-        st.caption(f"**Название:** {recipe_title_row.iloc[0, 0]}")
     if ingredients_df.empty:
         st.caption("Ингредиенты не индексированы")
     else:
@@ -147,8 +154,8 @@ with col_ingredients:
 
 source_row = run_query(
     conn,
-    "SELECT source FROM recipes WHERE category = ? AND slug = ?",
-    (selected_cat, selected_slug),
+    "SELECT source FROM recipes WHERE recipe_id = ?",
+    (selected_id,),
 )
 
 st.divider()

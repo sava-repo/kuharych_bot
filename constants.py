@@ -1,36 +1,35 @@
 """Общие константы проекта"""
 
-# ── Категории рецептов ──────────────────────────────────────────────────
+# ── Стартовый набор категорий (сидируется в каждую новую группу) ────────
+# is_default=True помечает категорию-амортизатор: в неё уходят рецепты при
+# удалении других категорий и при добавлении уже известного рилса в новую
+# группу. Default неудаляем — в группе всегда минимум одна категория.
 
-VALID_CATEGORIES: list[str] = ["завтрак", "основное блюдо", "десерт"]
+DEFAULT_CATEGORIES: list[dict] = [
+    {"name": "завтрак", "position": 0, "is_default": False},
+    {"name": "основное блюдо", "position": 1, "is_default": True},
+    {"name": "десерт", "position": 2, "is_default": False},
+]
 
-# Маппинг: текст кнопки меню → категория
-MENU_BUTTON_TO_CATEGORY: dict[str, str] = {
-    "🌅 Завтрак": "завтрак",
-    "🍽 Основное блюдо": "основное блюдо",
-    "🍰 Десерт": "десерт",
-}
-
-# Короткие коды категорий для callback_data (лимит 64 байта)
-CATEGORY_TO_CODE: dict[str, str] = {
-    "завтрак": "z",
-    "основное блюдо": "o",
-    "десерт": "d",
-}
-CODE_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_TO_CODE.items()}
+DEFAULT_CATEGORY_NAME: str = "основное блюдо"
 
 
-def category_to_code(category: str) -> str:
-    """Короткий код категории для callback_data"""
-    return CATEGORY_TO_CODE.get(category, "o")
+def find_default(defaults: list[dict] | None = None) -> str:
+    """Имя default-категории из набора DEFAULT_CATEGORIES."""
+    for cat in defaults or DEFAULT_CATEGORIES:
+        if cat.get("is_default"):
+            return cat["name"]
+    return DEFAULT_CATEGORY_NAME
 
 
-def code_to_category(code: str) -> str:
-    """Категория по короткому коду"""
-    return CODE_TO_CATEGORY.get(code, "основное блюдо")
+# ── Лимиты категорий ─────────────────────────────────────────────────────
+
+MAX_CATEGORIES_PER_GROUP: int = 30
+MIN_CATEGORY_NAME_LEN: int = 1
+MAX_CATEGORY_NAME_LEN: int = 50
 
 
-# ── Лимиты ────────────────────────────────────────────────────────────────
+# ── Лимиты обработки видео ───────────────────────────────────────────────
 
 MAX_VIDEO_DURATION_SEC: int = 180  # 3 минуты
 MIN_TRANSCRIPTION_WORDS: int = 10

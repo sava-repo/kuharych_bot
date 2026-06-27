@@ -39,3 +39,11 @@ class SpeechNotRecognizedError(Exception):
 class StorageUnavailableError(Exception):
     """База рецептов временно недоступна."""
     pass
+
+
+# ── Категории ───────────────────────────────────────────────────────────
+
+
+class CategoryError(Exception):
+    """Ошибка операции с категорией (дубликат, лимит, неверное имя)."""
+    pass

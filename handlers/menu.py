@@ -13,12 +13,7 @@ import services.group_manager as gm
 import services.cache as cache
 import services.rotation as rotation
 from models.recipe import Recipe
-from constants import (
-    MENU_BUTTON_TO_CATEGORY,
-    category_to_code,
-    code_to_category,
-)
-from handlers.keyboards import MENU_KEYBOARD, search_pagination_keyboard
+from handlers.keyboards import build_menu_keyboard, search_pagination_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -31,96 +26,89 @@ class SearchState(StatesGroup):
     waiting_for_query = State()
 
 
-def _parse_category(text: str) -> str | None:
-    """Определяет категорию из текста кнопки"""
-    return MENU_BUTTON_TO_CATEGORY.get(text)
+# Команды reply-клавиатуры, которые не должны трактоваться как категории
+_MENU_COMMANDS = {"🔍 Поиск", "👥 Группы", "🗂 Категории"}
+
+
+async def category_button_filter(message: Message) -> dict | bool:
+    """Матчит сообщение с кнопкой-категорией активной группы.
+
+    Возвращает {"category": Category} или False. URL и команды пропускает,
+    чтобы их обработали другие роутеры (link/группы/категории).
+    """
+    text = message.text
+    if not text or text in _MENU_COMMANDS:
+        return False
+    if text.startswith("/") or "://" in text:
+        return False
+    group_id = gm.get_user_active_group(message.from_user.id)
+    cat = gm.get_category(group_id, text)
+    if cat:
+        return {"category": cat}
+    return False
 
 
 # ── Выбор случайного рецепта ───────────────────────────────────────────
 
-def _pick_random_recipe(user_id: int, group_id: str, category: str) -> dict | None:
-    """Выбирает случайный валидный рецепт с учётом rotation.
-
-    Возвращает {recipe, source_url, rk, cc} или None, если в категории нет
-    ни одного рецепта с контентом. Фильтрует «осиротевшие» slug'и (есть в
-    group_recipes, но отсутствуют в recipes) и логирует их. rotation
-    обновляется только после успешной загрузки рецепта (design rotation §5).
-    """
-    all_slugs = gm.get_group_recipes_by_category(group_id, category)
-    if not all_slugs:
+def _pick_random_recipe(
+    user_id: int, group_id: str, category_id: int, category_name: str
+) -> dict | None:
+    """Выбирает случайный валидный рецепт с учётом rotation."""
+    recipe_ids = gm.get_group_recipes_by_category(group_id, category_id)
+    if not recipe_ids:
         return None
 
-    pairs = [(s, gm.get_recipe(category, s)) for s in all_slugs]
-    valid = [(s, data) for s, data in pairs if data]
-    orphans = [s for s, data in pairs if not data]
+    pairs = [(rid, gm.get_recipe(rid)) for rid in recipe_ids]
+    valid = [(rid, data) for rid, data in pairs if data]
+    orphans = [rid for rid, data in pairs if not data]
     if orphans:
         logger.warning(
-            "Orphan recipe slugs skipped (missing in recipes): "
-            "group=%s category=%s slugs=%s",
-            group_id, category, orphans,
+            "Orphan recipe ids skipped (missing in recipes): "
+            "group=%s category_id=%s ids=%s",
+            group_id, category_id, orphans,
         )
     if not valid:
         return None
 
-    excluded = set(rotation.get_excluded(user_id, category))
+    excluded = set(rotation.get_excluded(user_id, category_id))
     candidates = [p for p in valid if p[0] not in excluded] or valid
 
-    slug, recipe_data = random.choice(candidates)
-    rotation.add(user_id, category, slug, len(valid))
+    recipe_id, recipe_data = random.choice(candidates)
+    rotation.add(user_id, category_id, recipe_id, len(valid))
 
-    recipe = Recipe.from_markdown(
-        recipe_data["content_md"], category, recipe_data["source"]
-    )
+    recipe = Recipe.from_markdown(recipe_data["content_md"], recipe_data["source"])
     return {
         "recipe": recipe,
-        "source_url": gm.find_source_by_slug(category, slug),
-        "rk": cache.put_recipe(category, slug),
-        "cc": category_to_code(category),
+        "recipe_id": recipe_id,
+        "source_url": gm.find_source_by_recipe_id(recipe_id),
+        "rk": cache.put_recipe(recipe_id, group_id),
+        "category_id": category_id,
+        "category_name": category_name,
     }
 
 
 def _random_recipe_markup(result: dict):
     """Inline-клавиатура для сообщения со случайным рецептом."""
-    cc = result["cc"]
     rk = result["rk"]
+    category_id = result["category_id"]
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
 
     source_url = result["source_url"]
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
 
-    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{cc}")
+    builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{category_id}")
+
     builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
     return builder.as_markup()
 
 
 # ── Хэндлеры категорий ─────────────────────────────────────────────────
-
-@router.message(F.text.in_(["🌅 Завтрак", "🍽 Основное блюдо", "🍰 Десерт"]))
-async def handle_menu_category(message: Message) -> None:
-    """Обработка нажатия кнопки меню — случайный рецепт из категории"""
-    user_id = message.from_user.id
-    group_id = gm.get_user_active_group(user_id)
-    category = _parse_category(message.text)
-    if not category:
-        return
-
-    result = _pick_random_recipe(user_id, group_id, category)
-    if not result:
-        group = gm.get_group(group_id)
-        group_name = group.name if group else "Неизвестная"
-        await message.answer(
-            f"📭 Пока нет рецептов в категории «{category}» в группе «{group_name}».\n"
-            f"Отправьте мне ссылку на рилс с рецептом!"
-        )
-        return
-
-    await message.answer(
-        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message()}",
-        reply_markup=_random_recipe_markup(result),
-    )
+# ВНИМАНИЕ: handle_menu_category регистрируется ПОСЛЕ search/open-хендлеров
+# (ниже в файле), чтобы ввод названия категории во время FSM поиска не
+# перехватывался этим хендлером.
 
 
 @router.callback_query(F.data.startswith("rnd:"))
@@ -134,18 +122,20 @@ async def handle_random_callback(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка данных", show_alert=True)
         return
 
-    _, cc = parts
-    category = code_to_category(cc)
+    _, category_id_str = parts
+    category_id = int(category_id_str)
+    category = gm.get_category_by_id(category_id)
+    category_name = category.name if category else "—"
 
     await callback.answer()
 
-    result = _pick_random_recipe(user_id, group_id, category)
+    result = _pick_random_recipe(user_id, group_id, category_id, category_name)
     if not result:
-        await callback.message.edit_text(f"📭 Пока нет рецептов в категории «{category}»")
+        await callback.message.edit_text(f"📭 Пока нет рецептов в категории «{category_name}»")
         return
 
     await callback.message.edit_text(
-        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message()}",
+        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message(result['category_name'])}",
         reply_markup=_random_recipe_markup(result),
     )
 
@@ -189,9 +179,9 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
     })
 
     recipe_ids = []
-    for cat, slug, title in page_results:
-        rid = cache.put_recipe(cat, slug)
-        recipe_ids.append(rid)
+    for rid, slug, title in page_results:
+        rkey = cache.put_recipe(rid, group_id)
+        recipe_ids.append(rkey)
 
     text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
     kb = search_pagination_keyboard(cache_key, page, len(results))
@@ -222,9 +212,9 @@ async def handle_search_page(callback: CallbackQuery) -> None:
     page_results = results[page * SEARCH_PAGE_SIZE:(page + 1) * SEARCH_PAGE_SIZE]
 
     recipe_ids = []
-    for cat, slug, title in page_results:
-        rid = cache.put_recipe(cat, slug)
-        recipe_ids.append(rid)
+    for rid, slug, title in page_results:
+        rkey = cache.put_recipe(rid, cached["group_id"])
+        recipe_ids.append(rkey)
 
     text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
     kb = search_pagination_keyboard(cache_key, page, total)
@@ -234,7 +224,7 @@ async def handle_search_page(callback: CallbackQuery) -> None:
 
 def _format_search_results(
     query: str,
-    page_results: list[tuple[str, str, str]],
+    page_results: list[tuple[int, str, str]],
     recipe_ids: list[int],
     page: int,
     total_pages: int,
@@ -242,11 +232,10 @@ def _format_search_results(
     """Форматирует страницу результатов поиска."""
     lines = [f"🔎 Результаты поиска «{query}»:\n"]
 
-    for i, (cat, slug, title) in enumerate(page_results):
-        rid = recipe_ids[i]
+    for i, (rid, slug, title) in enumerate(page_results):
+        rkey = recipe_ids[i]
         lines.append(f"{title}")
-        lines.append(f"Категория: {cat.capitalize()}")
-        lines.append(f"Открыть: /open{rid}")
+        lines.append(f"Открыть: /open{rkey}")
         lines.append("")
 
     if total_pages > 1:
@@ -266,29 +255,55 @@ async def handle_open_recipe(message: Message) -> None:
         await message.answer("❌ Рецепт не найден. Попробуйте поиск заново")
         return
 
-    category = cached["category"]
-    slug = cached["slug"]
+    recipe_id = cached["recipe_id"]
+    group_id = cached.get("group_id") or gm.get_user_active_group(message.from_user.id)
 
-    recipe_data = gm.get_recipe(category, slug)
+    recipe_data = gm.get_recipe(recipe_id)
     if not recipe_data:
         await message.answer("❌ Рецепт не найден")
         return
 
-    recipe = Recipe.from_markdown(recipe_data["content_md"], category, recipe_data["source"])
-    cc = category_to_code(category)
-    rk = int(key)
+    recipe = Recipe.from_markdown(recipe_data["content_md"], recipe_data["source"])
 
+    category = gm.get_group_recipe_category(group_id, recipe_id)
+    category_name = category.name if category else None
+    source_url = gm.find_source_by_recipe_id(recipe_id)
+
+    rk = cache.put_recipe(recipe_id, group_id)
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{cc}:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{cc}:{rk}")
-
-    source_url = gm.find_source_by_slug(category, slug)
+    builder.button(text="🗑", callback_data=f"del:{rk}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
-
     builder.adjust(2, 1) if source_url else builder.adjust(2)
 
     await message.answer(
-        recipe.format_message(),
+        recipe.format_message(category_name),
         reply_markup=builder.as_markup(),
+    )
+
+
+# ── Хэндлер кнопок-категорий (регистрируется последним, чтобы не перехватывать
+# ввод во время FSM поиска или других состояний).
+
+
+@router.message(category_button_filter)
+async def handle_menu_category(message: Message, category) -> None:
+    """Обработка нажатия кнопки меню — случайный рецепт из категории"""
+    user_id = message.from_user.id
+    group_id = gm.get_user_active_group(user_id)
+
+    result = _pick_random_recipe(user_id, group_id, category.category_id, category.name)
+    if not result:
+        group = gm.get_group(group_id)
+        group_name = group.name if group else "Неизвестная"
+        await message.answer(
+            f"📭 Пока нет рецептов в категории «{category.name}» в группе «{group_name}».\n"
+            f"Отправьте мне ссылку на рилс с рецептом!"
+        )
+        return
+
+    await message.answer(
+        f"🎲 Случайный рецепт:\n\n{result['recipe'].format_message(result['category_name'])}",
+        reply_markup=_random_recipe_markup(result),
     )

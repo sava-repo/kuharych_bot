@@ -1,4 +1,9 @@
-"""Dataclass для рецепта"""
+"""Dataclass для рецепта.
+
+Категория — transient-поле: заполняется только ответом LLM при парсинге и
+используется для выбора category_id при добавлении в группу. В хранилище
+категория рецепта не хранится (она является тегом членства в группе).
+"""
 
 import json
 from dataclasses import dataclass, field
@@ -9,8 +14,8 @@ class Recipe:
     title: str
     ingredients: list[str]
     steps: list[str]
-    category: str  # завтрак / основное блюдо / десерт
     source: str
+    category: str = ""  # transient: suggestion LLM, не сохраняется в content_md
     tags: list[str] = field(default_factory=list)
 
     @property
@@ -25,20 +30,30 @@ class Recipe:
             slug = slug.replace("--", "-")
         return slug.strip("-")
 
-    def format_message(self) -> str:
-        """Форматирование рецепта для отправки в чат"""
+    def format_message(self, category_name: str | None = None) -> str:
+        """Форматирование рецепта для отправки в чат.
+
+        category_name: имя категории в активной группе (выводится отдельной
+            строкой, если передано). Категория — контекст группы, а не рецепта.
+        """
         ingredients_text = "\n".join(f"• {ing}" for ing in self.ingredients)
         steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(self.steps))
 
-        return (
+        msg = (
             f"🍳 {self.title}\n\n"
             f"📋 Ингредиенты:\n{ingredients_text}\n\n"
-            f"👨‍🍳 Приготовление:\n{steps_text}\n\n"
-            f"📂 Категория: {self.category}"
+            f"👨‍🍳 Приготовление:\n{steps_text}"
         )
+        if category_name:
+            msg += f"\n\n📂 Категория: {category_name}"
+        return msg
 
     def to_markdown(self, created: str) -> str:
-        """Форматирование рецепта в Markdown с YAML frontmatter для Gramax"""
+        """Форматирование рецепта в Markdown с YAML frontmatter.
+
+        Категория не записывается (она является тегом группы, а не атрибутом
+        рецепта).
+        """
         tags_str = json.dumps(self.tags, ensure_ascii=False)
         ingredients_text = "\n".join(f"- {ing}" for ing in self.ingredients)
         steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(self.steps))
@@ -46,7 +61,6 @@ class Recipe:
         return (
             f"---\n"
             f'title: "{self.title}"\n'
-            f'category: "{self.category}"\n'
             f'source: "{self.source}"\n'
             f'created: "{created}"\n'
             f"tags: {tags_str}\n"
@@ -57,12 +71,11 @@ class Recipe:
         )
 
     @classmethod
-    def from_markdown(cls, md_content: str, category: str, source: str) -> "Recipe":
-        """Парсит рецепт из Markdown (после загрузки из GitHub).
+    def from_markdown(cls, md_content: str, source: str) -> "Recipe":
+        """Парсит рецепт из Markdown (после загрузки из хранилища).
 
         Args:
             md_content: содержимое .md файла с YAML frontmatter
-            category: категория рецепта
             source: URL источника
 
         Returns:
@@ -81,6 +94,7 @@ class Recipe:
             if stripped.startswith("title:"):
                 title = stripped.replace("title:", "").strip().strip('"')
                 continue
+            # Категория в frontmatter игнорируется (не атрибут рецепта)
             if stripped.startswith(("category:", "source:", "created:", "tags:")):
                 continue
             if stripped.startswith("# "):
@@ -103,7 +117,7 @@ class Recipe:
             title=title or "Без названия",
             ingredients=ingredients,
             steps=steps,
-            category=category,
+            category="",
             source=source,
         )
 

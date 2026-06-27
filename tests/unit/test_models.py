@@ -89,9 +89,9 @@ class TestRecipeToMarkdown:
         )
         
         result = recipe.to_markdown(created="2024-01-01")
-        
+
         assert 'title: "Омлет"' in result
-        assert 'category: "завтрак"' in result
+        assert 'category:' not in result  # категория не атрибут рецепта
         assert 'source: "instagram"' in result
         assert 'created: "2024-01-01"' in result
         assert '"быстро", "просто"' in result

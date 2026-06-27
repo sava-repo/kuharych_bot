@@ -97,7 +97,7 @@ def delete(key: str) -> None:
         logger.debug(f"Cache delete: {key}")
 
 
-def put_recipe(category: str, slug: str) -> int:
+def put_recipe(recipe_id: int, group_id: str | None = None) -> int:
     """
     Сохраняет рецепт в кэш с числовым ключом (от 10000).
     Возвращает числовой ID для использования в /open{key}.
@@ -105,9 +105,9 @@ def put_recipe(category: str, slug: str) -> int:
     global _recipe_counter
     _evict_if_needed()
     key = str(_recipe_counter)
-    _cache[key] = ({"category": category, "slug": slug}, time.time())
+    _cache[key] = ({"recipe_id": recipe_id, "group_id": group_id}, time.time())
     _recipe_counter += 1
-    logger.debug(f"Cache put_recipe: {key}, category={category}, slug={slug}")
+    logger.debug(f"Cache put_recipe: {key}, recipe_id={recipe_id}, group_id={group_id}")
     return _recipe_counter - 1
 
 

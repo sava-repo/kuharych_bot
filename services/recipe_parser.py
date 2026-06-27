@@ -6,7 +6,6 @@ from pathlib import Path
 import httpx
 
 import config
-from constants import VALID_CATEGORIES
 from exceptions import NotARecipeError, RecipeParseError
 from models.recipe import Recipe
 
@@ -14,8 +13,22 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.txt"
 
+DEFAULT_CATEGORIES_FALLBACK: list[str] = ["завтрак", "основное блюдо", "десерт"]
+DEFAULT_CATEGORY_FALLBACK: str = "основное блюдо"
+
+
 def _load_system_prompt() -> str:
     return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _build_system_prompt(categories: list[str], default: str) -> str:
+    """Подставляет список категорий активной группы в шаблон промпта."""
+    template = _load_system_prompt()
+    if not categories:
+        categories = DEFAULT_CATEGORIES_FALLBACK
+        default = default or DEFAULT_CATEGORY_FALLBACK
+    categories_str = " / ".join(categories)
+    return template.replace("{categories}", categories_str).replace("{default}", default)
 
 
 def _build_user_prompt(transcription: str | None, caption: str | None) -> str:
@@ -32,9 +45,16 @@ def _build_user_prompt(transcription: str | None, caption: str | None) -> str:
     )
 
 
-def _parse_recipe_response(response_text: str, source: str) -> Recipe:
+def _parse_recipe_response(
+    response_text: str,
+    source: str,
+    categories: list[str],
+    default: str,
+) -> Recipe:
     """
     Парсит ответ GLM-5 в структурированный Recipe.
+    Категория выбирается из переданного списка categories; при отсутствии
+    уверенного совпадения используется default.
     """
     text = response_text.strip()
 
@@ -58,16 +78,18 @@ def _parse_recipe_response(response_text: str, source: str) -> Recipe:
                 title = line
                 break
 
-    # Извлекаем категорию
-    category = "основное блюдо"  # по умолчанию
+    # Извлекаем категорию — матчинг против списка категорий группы
+    category = default or DEFAULT_CATEGORY_FALLBACK
+    cat_lower_map = {c.lower(): c for c in categories}
     for line in text.split("\n"):
-        line = line.strip().lower()
-        if line.startswith("категория:"):
-            cat_text = line.split(":", 1)[1].strip()
-            for valid_cat in VALID_CATEGORIES:
-                if valid_cat in cat_text:
-                    category = valid_cat
+        stripped = line.strip()
+        if stripped.lower().startswith("категория:"):
+            cat_text = stripped.split(":", 1)[1].strip().lower()
+            for cat_low, cat_orig in cat_lower_map.items():
+                if cat_low in cat_text or cat_text in cat_low:
+                    category = cat_orig
                     break
+            break
 
     # Извлекаем ингредиенты
     ingredients: list[str] = []
@@ -162,15 +184,26 @@ def _generate_tags(title: str, ingredients: list[str]) -> list[str]:
     return list(tags)[:10]
 
 
-async def generate_recipe(transcription: str | None, caption: str | None, source: str) -> Recipe:
+async def generate_recipe(
+    transcription: str | None,
+    caption: str | None,
+    source: str,
+    categories: list[str] | None = None,
+    default: str = "",
+) -> Recipe:
     """
     Отправляет транскрибацию в GLM-5 и возвращает структурированный рецепт.
+
+    categories / default определяют динамический список категорий активной
+    группы, который подставляется в системный промпт.
     """
-    system_prompt = _load_system_prompt()
+    cats = categories or DEFAULT_CATEGORIES_FALLBACK
+    default = default or DEFAULT_CATEGORY_FALLBACK
+    system_prompt = _build_system_prompt(cats, default)
     user_prompt = _build_user_prompt(transcription, caption)
 
     t_len = f"{len(transcription)} chars" if transcription else "None (caption fallback)"
-    logger.info(f"Sending to GLM-5: transcription={t_len}, caption={bool(caption)}")
+    logger.info(f"Sending to GLM-5: transcription={t_len}, caption={bool(caption)}, categories={len(cats)}")
 
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
         response = await client.post(
@@ -198,4 +231,4 @@ async def generate_recipe(transcription: str | None, caption: str | None, source
 
     logger.info(f"GLM-5 response ({len(content)} chars): {content[:200]}...")
 
-    return _parse_recipe_response(content, source)
+    return _parse_recipe_response(content, source, cats, default)

@@ -29,23 +29,15 @@ def temp_db(tmp_path: Path, monkeypatch) -> None:
 
 
 def _setup_group(group_id: str = "pers_1", user_id: int = 1) -> None:
-    """Создаёт группу и пользователя напрямую в БД."""
-    with group_manager.db.connect() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
-            (group_id, "Test", user_id),
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
-            (group_id, user_id),
-        )
+    """Создаёт пользователя с личной группой (и дефолтными категориями)."""
+    group_manager._ensure_user(user_id)
 
 
 def _save_and_link(group_id: str, category: str, slug: str, title: str,
-                   ingredients: list[str], steps: list[str] | None = None) -> None:
-    """Сохраняет рецепт и привязывает к группе."""
-    group_manager.save_recipe(
-        category=category,
+                   ingredients: list[str], steps: list[str] | None = None,
+                   user_id: int = 1) -> int:
+    """Сохраняет рецепт и привязывает к группе под указанную категорию."""
+    recipe_id = group_manager.save_recipe(
         slug=slug,
         title=title,
         content_md=f"# {title}",
@@ -53,11 +45,10 @@ def _save_and_link(group_id: str, category: str, slug: str, title: str,
         ingredients=ingredients,
         steps=steps or [],
     )
-    with group_manager.db.connect() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO group_recipes (group_id, category, slug) VALUES (?, ?, ?)",
-            (group_id, category, slug),
-        )
+    cat = group_manager.get_category(group_id, category)
+    category_id = cat.category_id if cat else group_manager.get_default_category_id(group_id)
+    group_manager.add_recipe_to_group(group_id, recipe_id, category_id, user_id)
+    return recipe_id
 
 
 class TestSearchFulltext:
@@ -67,7 +58,8 @@ class TestSearchFulltext:
 
         results = group_manager.search_recipes_fulltext("pers_1", "яйца")
         assert len(results) == 1
-        assert results[0] == ("завтрак", "omlet", "Омлет")
+        assert results[0][1] == "omlet"
+        assert results[0][2] == "Омлет"
 
     def test_search_by_ingredient_lemma_singular(self, temp_db):
         _setup_group()
@@ -151,19 +143,47 @@ class TestSearchFulltext:
         assert group_manager.search_recipes_fulltext("pers_1", "   ") == []
 
     def test_search_only_recipes_in_group(self, temp_db):
-        _setup_group()
-        with group_manager.db.connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO groups (group_id, name, owner_id, invite_code) VALUES (?, ?, ?, NULL)",
-                ("pers_2", "Other", 2),
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)",
-                ("pers_2", 2),
-            )
+        _setup_group("pers_1", 1)
+        _setup_group("pers_2", 2)
 
         _save_and_link("pers_1", "завтрак", "omlet1", "Омлет 1", ["яйца"])
         _save_and_link("pers_1", "завтрак", "omlet2", "Омлет 2", ["яйца", "молоко"])
 
         results = group_manager.search_recipes_fulltext("pers_2", "яйца")
         assert results == []
+
+
+class TestCategoryIsolation:
+    """Один рецепт в разных категориях у разных групп; перемещение изолировано."""
+
+    def test_same_recipe_different_category_per_group(self, temp_db):
+        _setup_group("pers_1", 1)
+        _setup_group("pers_2", 2)
+        # Оба пользователя добавляют один рилс → один recipe_id
+        rid = _save_and_link("pers_1", "завтрак", "borshch", "Борщ", ["свёкла"], user_id=1)
+        group_manager.add_recipe_to_group(
+            "pers_2", rid,
+            group_manager.get_category("pers_2", "основное блюдо").category_id,
+            user_id=2,
+        )
+        cat1 = group_manager.get_group_recipe_category("pers_1", rid)
+        cat2 = group_manager.get_group_recipe_category("pers_2", rid)
+        assert cat1.name == "завтрак"
+        assert cat2.name == "основное блюдо"
+
+    def test_move_does_not_affect_other_group(self, temp_db):
+        _setup_group("pers_1", 1)
+        _setup_group("pers_2", 2)
+        rid = _save_and_link("pers_1", "завтрак", "borshch", "Борщ", ["свёкла"], user_id=1)
+        group_manager.add_recipe_to_group(
+            "pers_2", rid,
+            group_manager.get_category("pers_2", "завтрак").category_id,
+            user_id=2,
+        )
+        # pers_1 переносит в «десерт»
+        new_cid = group_manager.get_category("pers_1", "десерт").category_id
+        group_manager.move_recipe_in_group("pers_1", rid, new_cid)
+
+        assert group_manager.get_group_recipe_category("pers_1", rid).name == "десерт"
+        # В pers_2 категория не изменилась
+        assert group_manager.get_group_recipe_category("pers_2", rid).name == "завтрак"

@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 import config
-from handlers import link, buttons, menu, groups
+from handlers import link, buttons, menu, groups, categories
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -29,6 +29,7 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
 
     dp.include_router(groups.router)
+    dp.include_router(categories.router)
     dp.include_router(menu.router)
     dp.include_router(buttons.router)
     dp.include_router(link.router)

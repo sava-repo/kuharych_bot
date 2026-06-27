@@ -34,11 +34,11 @@ with tab_text:
         result = run_query(
             conn,
             """
-            SELECT r.category,
+            SELECT r.recipe_id,
                    r.slug,
                    r.title,
                    (SELECT COUNT(DISTINCT group_id) FROM group_recipes gr
-                      WHERE gr.category = r.category AND gr.slug = r.slug) AS groups_count
+                      WHERE gr.recipe_id = r.recipe_id) AS groups_count
             FROM recipes r
             WHERE r.title LIKE ? OR r.content_md LIKE ?
             ORDER BY groups_count DESC, r.title
@@ -49,7 +49,7 @@ with tab_text:
         st.dataframe(
             result.rename(
                 columns={
-                    "category": "Категория",
+                    "recipe_id": "ID",
                     "slug": "Slug",
                     "title": "Название",
                     "groups_count": "В группах",
@@ -69,9 +69,9 @@ with tab_url:
         result = run_query(
             conn,
             """
-            SELECT ri.reel_id, ri.category, ri.slug, r.source
+            SELECT ri.reel_id, r.recipe_id, r.slug, r.source
             FROM reel_index ri
-            LEFT JOIN recipes r ON r.category = ri.category AND r.slug = ri.slug
+            LEFT JOIN recipes r ON r.recipe_id = ri.recipe_id
             WHERE ri.reel_id LIKE ? OR r.source LIKE ?
             ORDER BY ri.reel_id
             """,
@@ -82,7 +82,7 @@ with tab_url:
             result.rename(
                 columns={
                     "reel_id": "Reel ID",
-                    "category": "Категория",
+                    "recipe_id": "ID",
                     "slug": "Slug",
                     "source": "URL",
                 }
@@ -101,16 +101,18 @@ with tab_slug:
         result = run_query(
             conn,
             """
-            SELECT DISTINCT category, slug
-            FROM group_recipes
+            SELECT recipe_id, slug, title
+            FROM recipes
             WHERE slug LIKE ?
-            ORDER BY category, slug
+            ORDER BY slug
             """,
             (f"%{slug_query.strip()}%",),
         )
         st.caption(f"Найдено строк: {len(result)}")
         st.dataframe(
-            result.rename(columns={"category": "Категория", "slug": "Slug"}),
+            result.rename(
+                columns={"recipe_id": "ID", "slug": "Slug", "title": "Название"}
+            ),
             hide_index=True,
             use_container_width=True,
         )
@@ -158,19 +160,20 @@ with st.expander("📖 Схема БД"):
         """
         | Таблица | Колонки |
         |---------|---------|
-        | `users` | `user_id`, `active_group` |
+        | `users` | `user_id`, `active_group`, `registered_at` |
         | `groups` | `group_id`, `name`, `owner_id`, `invite_code` |
         | `group_members` | `group_id`, `user_id` |
-        | `group_recipes` | `group_id`, `category`, `slug` |
-        | `reel_index` | `reel_id`, `category`, `slug` |
-        | `recipes` | `category`, `slug`, `title`, `content_md`, `source`, `full_text_lemmas`, `created` |
-        | `recipe_ingredients` | `category`, `slug`, `ingredient`, `ingredient_lemmas` |
+        | `group_categories` | `category_id`, `group_id`, `name`, `position`, `is_default` |
+        | `group_recipes` | `group_id`, `recipe_id`, `category_id`, `added_at`, `added_by_user_id` |
+        | `reel_index` | `reel_id`, `recipe_id` |
+        | `recipes` | `recipe_id`, `slug`, `title`, `content_md`, `source`, `full_text_lemmas`, `created` |
+        | `recipe_ingredients` | `recipe_id`, `ingredient`, `ingredient_lemmas` |
         """
     )
     st.code(
         """
         -- Пример: топ групп с количеством рецептов
-        SELECT g.name, COUNT(gr.slug) AS recipes
+        SELECT g.name, COUNT(gr.recipe_id) AS recipes
         FROM groups g
         LEFT JOIN group_recipes gr ON gr.group_id = g.group_id
         GROUP BY g.group_id

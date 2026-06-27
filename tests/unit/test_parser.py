@@ -128,7 +128,7 @@ class TestParseRecipeResponse:
 Шаг 4: Соедините все ингредиенты и подавайте
 """
         
-        recipe = _parse_recipe_response(response_text, "instagram")
+        recipe = _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert recipe.title == "Паста Карбонара"
         assert recipe.category == "основное блюдо"
@@ -152,7 +152,7 @@ class TestParseRecipeResponse:
 2. Варить 1 час
 """
         
-        recipe = _parse_recipe_response(response_text, "instagram")
+        recipe = _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert recipe.title == "Борщ"
         assert len(recipe.steps) == 2
@@ -172,7 +172,7 @@ class TestParseRecipeResponse:
 Шаг 2: Жарить
 """
         
-        recipe = _parse_recipe_response(response_text, "instagram")
+        recipe = _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert recipe.category == "основное блюдо"
 
@@ -191,7 +191,7 @@ class TestParseRecipeResponse:
 """
         
         with pytest.raises(NotARecipeError) as exc_info:
-            _parse_recipe_response(response_text, "instagram")
+            _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert "не содержит рецепт" in str(exc_info.value).lower()
 
@@ -206,7 +206,7 @@ class TestParseRecipeResponse:
 """
         
         with pytest.raises(RecipeParseError) as exc_info:
-            _parse_recipe_response(response_text, "instagram")
+            _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert "название" in str(exc_info.value).lower()
 
@@ -220,7 +220,7 @@ class TestParseRecipeResponse:
 """
         
         with pytest.raises(RecipeParseError) as exc_info:
-            _parse_recipe_response(response_text, "instagram")
+            _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert "ингредиенты" in str(exc_info.value).lower()
 
@@ -234,7 +234,7 @@ class TestParseRecipeResponse:
 """
         
         with pytest.raises(RecipeParseError) as exc_info:
-            _parse_recipe_response(response_text, "instagram")
+            _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         
         assert "шаг" in str(exc_info.value).lower() or "способ" in str(exc_info.value).lower()
 
@@ -251,15 +251,56 @@ class TestParseRecipeResponse:
 """
         
         # This should work (text format, not JSON)
-        recipe = _parse_recipe_response(response_text, "instagram")
+        recipe = _parse_recipe_response(response_text, "instagram", ["завтрак", "основное блюдо", "десерт"], "основное блюдо")
         assert recipe.title == "Тест"
 
     def test_empty_response(self):
         """Handle empty response text"""
         with pytest.raises(RecipeParseError):
-            _parse_recipe_response("", "instagram")
+            _parse_recipe_response("", "instagram", ["основное блюдо"], "основное блюдо")
 
     def test_whitespace_only_response(self):
         """Handle whitespace-only response"""
         with pytest.raises(RecipeParseError):
-            _parse_recipe_response("   \n\n   ", "instagram")
+            _parse_recipe_response("   \n\n   ", "instagram", ["основное блюдо"], "основное блюдо")
+
+
+class TestDynamicCategories:
+    """Категории выбираются из списка активной группы; fallback на default."""
+
+    def test_custom_category_matched(self):
+        """LLM-ответ с кастомной категорией пользователя матчится."""
+        response = (
+            "Название: Суп\n\n"
+            "Ингредиенты:\n- Вода\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: первые блюда\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["первые блюда", "на праздник"], "первые блюда"
+        )
+        assert recipe.category == "первые блюда"
+
+    def test_unknown_category_falls_back_to_default(self):
+        """Категория вне списка пользователя → default."""
+        response = (
+            "Название: Суп\n\n"
+            "Ингредиенты:\n- Вода\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: неведомая\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["первые блюда", "на праздник"], "на праздник"
+        )
+        assert recipe.category == "на праздник"
+
+    def test_missing_category_line_uses_default(self):
+        response = (
+            "Название: Суп\n\n"
+            "Ингредиенты:\n- Вода\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["завтрак", "на праздник"], "на праздник"
+        )
+        assert recipe.category == "на праздник"

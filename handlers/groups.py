@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import services.group_manager as gm
+from handlers.keyboards import build_menu_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,11 @@ async def handle_grp_switch(callback: CallbackQuery) -> None:
     if gm.set_user_active_group(user_id, group_id):
         group = gm.get_group(group_id)
         await callback.answer(f"Переключено на «{group.name}»")
+        # Обновляем reply-клавиатуру меню (категории зависят от группы)
+        await callback.message.answer(
+            f"📂 Активная группа: «{group.name}»",
+            reply_markup=build_menu_keyboard(group_id),
+        )
         # Обновляем детали
         await handle_grp_select(callback)
     else:
@@ -189,7 +195,7 @@ async def handle_group_name_entered(message: Message, state: FSMContext) -> None
 
     await message.answer(
         f"✅ Группа «{group.name}» создана и сделана активной!",
-        reply_markup=_group_list_keyboard(message.from_user.id),
+        reply_markup=build_menu_keyboard(group.group_id),
     )
     await state.clear()
 

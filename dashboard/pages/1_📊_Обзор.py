@@ -27,9 +27,10 @@ try:
     by_category = run_query(
         conn,
         """
-        SELECT category, COUNT(DISTINCT slug) AS recipes
-        FROM group_recipes
-        GROUP BY category
+        SELECT gc.name AS category, COUNT(DISTINCT gr.recipe_id) AS recipes
+        FROM group_recipes gr
+        JOIN group_categories gc ON gc.category_id = gr.category_id
+        GROUP BY gc.name
         ORDER BY recipes DESC
         """,
     )
@@ -72,7 +73,7 @@ top_groups = run_query(
     """
     SELECT g.group_id,
            g.name,
-           COUNT(gr.slug) AS recipes
+           COUNT(gr.recipe_id) AS recipes
     FROM groups g
     LEFT JOIN group_recipes gr ON gr.group_id = g.group_id
     GROUP BY g.group_id
@@ -110,7 +111,7 @@ st.subheader("🥕 Топ-15 ингредиентов")
 top_ingredients = run_query(
     conn,
     """
-    SELECT ingredient, COUNT(DISTINCT category || '/' || slug) AS recipes
+    SELECT ingredient, COUNT(DISTINCT recipe_id) AS recipes
     FROM recipe_ingredients
     GROUP BY ingredient
     ORDER BY recipes DESC

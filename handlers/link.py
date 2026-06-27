@@ -19,7 +19,7 @@ from exceptions import (
     VideoDownloadError,
 )
 from services.recipe_pipeline import process_video
-from handlers.keyboards import MENU_KEYBOARD, duplicate_keyboard, recipe_keyboard
+from handlers.keyboards import build_menu_keyboard, duplicate_keyboard, recipe_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +90,14 @@ def _error_message(exc: Exception) -> str:
 @router.message(F.text, Command("start", "help"))
 async def cmd_start(message: Message) -> None:
     """Обработка /start и /help"""
+    user_id = message.from_user.id
+    active_group_id = gm.get_user_active_group(user_id)
     await message.answer(
         "👋 Привет! Я помогаю решить, что приготовить.\n\n"
         "Отправь мне ссылку на рилс — "
         "и я извлеку рецепт из видео.\n\n"
         "Используй кнопки меню внизу, чтобы получить случайный рецепт по категории.",
-        reply_markup=MENU_KEYBOARD,
+        reply_markup=build_menu_keyboard(active_group_id),
     )
 
 
@@ -132,11 +134,11 @@ async def handle_link(message: Message) -> None:
 
     if result.duplicate_info:
         await processing_msg.edit_text(
-            f"⚠️ Рецепт «{result.recipe.title}» уже существует в категории «{result.recipe.category}».\n\n"
+            f"⚠️ Рецепт «{result.recipe.title}» уже существует.\n\n"
             f"{result.recipe.format_message()}\n\n"
             f"Что делаем?",
             reply_markup=duplicate_keyboard(
-                result.recipe.category, result.recipe.slug,
+                result.recipe_id,
                 result.recipe,
             ),
         )
@@ -144,5 +146,9 @@ async def handle_link(message: Message) -> None:
         status = "✅ Рецепт сохранён!" if result.is_new else "✅ Рецепт добавлен в вашу коллекцию!"
         await processing_msg.edit_text(
             f"{status}\n\n{result.recipe.format_message()}",
-            reply_markup=recipe_keyboard(result.recipe.category, result.recipe.slug),
+            reply_markup=recipe_keyboard(
+                result.recipe_id,
+                active_group_id,
+                source_url=result.source_url or None,
+            ),
         )
