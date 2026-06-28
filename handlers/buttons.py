@@ -38,6 +38,24 @@ def _cached(callback: CallbackQuery, parts_count: int) -> dict | None:
     return cache.get(rk)
 
 
+def _parse_ref(
+    callback: CallbackQuery, expected_parts: int
+) -> tuple[int, str] | None:
+    """Парсит callback с payload рецепта, возвращает (recipe_id, group_id).
+
+    payload кодируется как ``recipe_id:group_id`` и занимает два последних
+    сегмента ``callback_data`` (del/delok/delcn/rcat/mov). Не обращается к
+    кэшу — данные читаются прямо из кнопки, поэтому переживают рестарт.
+    """
+    parts = _parse_callback(callback, expected_parts)
+    if parts is None:
+        return None
+    try:
+        return int(parts[-2]), parts[-1]
+    except (ValueError, IndexError):
+        return None
+
+
 async def _restore_recipe_view(
     callback: CallbackQuery,
     recipe_id: int,
@@ -77,33 +95,31 @@ async def _restore_recipe_view(
 @router.callback_query(F.data.startswith("del:"))
 async def handle_delete(callback: CallbackQuery) -> None:
     """Шаг 1: показ диалога подтверждения удаления рецепта"""
-    cached = _cached(callback, 2)
-    if not cached:
-        await callback.answer("Ошибка данных", show_alert=True)
+    ref = _parse_ref(callback, 3)
+    if ref is None:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    recipe_id = cached["recipe_id"]
+    recipe_id, group_id = ref
     recipe_data = gm.get_recipe(recipe_id)
     name = (recipe_data["title"] if recipe_data else None) or f"#{recipe_id}"
 
     await callback.answer()
     await callback.message.edit_text(
         f"Вы действительно хотите удалить рецепт «{name}»?",
-        reply_markup=confirm_delete_keyboard(_rk_from(callback)),
+        reply_markup=confirm_delete_keyboard(f"{recipe_id}:{group_id}"),
     )
 
 
 @router.callback_query(F.data.startswith("delok:"))
 async def handle_delete_confirm(callback: CallbackQuery) -> None:
     """Шаг 2 (подтверждение): реальное удаление рецепта из текущей группы"""
-    user_id = callback.from_user.id
-    cached = _cached(callback, 2)
-    if not cached:
-        await callback.answer("Ошибка данных", show_alert=True)
+    ref = _parse_ref(callback, 3)
+    if ref is None:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    recipe_id = cached["recipe_id"]
-    group_id = cached.get("group_id") or gm.get_user_active_group(user_id)
+    recipe_id, group_id = ref
 
     await callback.answer("Удаляю...")
 
@@ -128,13 +144,12 @@ async def handle_delete_confirm(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("delcn:"))
 async def handle_delete_cancel(callback: CallbackQuery) -> None:
     """Шаг 2 (отмена): возврат к просмотру рецепта"""
-    cached = _cached(callback, 2)
-    if not cached:
+    ref = _parse_ref(callback, 3)
+    if ref is None:
         await callback.answer("Данные устарели", show_alert=True)
         return
 
-    recipe_id = cached["recipe_id"]
-    group_id = cached.get("group_id") or gm.get_user_active_group(callback.from_user.id)
+    recipe_id, group_id = ref
 
     await callback.answer()
     await _restore_recipe_view(callback, recipe_id, group_id)
@@ -213,20 +228,18 @@ async def handle_save_new(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("rcat:"))
 async def handle_recat(callback: CallbackQuery) -> None:
     """Выбор новой категории для рецепта"""
-    cached = _cached(callback, 2)
-    if not cached:
-        await callback.answer("Ошибка данных", show_alert=True)
+    ref = _parse_ref(callback, 3)
+    if ref is None:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    recipe_id = cached["recipe_id"]
+    recipe_id, group_id = ref
     recipe_data = gm.get_recipe(recipe_id)
     name = (recipe_data["title"] if recipe_data else None) or f"#{recipe_id}"
 
-    group_id = cached.get("group_id") or gm.get_user_active_group(callback.from_user.id)
-
     await callback.message.edit_text(
         f"📂 Выберите новую категорию для «{name}»:",
-        reply_markup=category_select_keyboard(group_id, _rk_from(callback)),
+        reply_markup=category_select_keyboard(group_id, f"{recipe_id}:{group_id}"),
     )
 
 
@@ -235,20 +248,14 @@ async def handle_recat(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("mov:"))
 async def handle_move(callback: CallbackQuery) -> None:
     """Перемещение рецепта в другую категорию (в рамках текущей группы)"""
-    parts = _parse_callback(callback, 3)
-    if not parts:
-        await callback.answer("Ошибка данных", show_alert=True)
+    parts = _parse_callback(callback, 4)
+    if parts is None:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    new_category_id_str, rk = parts
+    new_category_id_str, recipe_id_str, group_id = parts
     new_category_id = int(new_category_id_str)
-    cached = cache.get(rk)
-    if not cached:
-        await callback.message.edit_text("❌ Данные устарели. Отправьте ссылку заново")
-        return
-
-    recipe_id = cached["recipe_id"]
-    group_id = cached.get("group_id") or gm.get_user_active_group(callback.from_user.id)
+    recipe_id = int(recipe_id_str)
 
     new_category = gm.get_category_by_id(new_category_id)
     new_name = new_category.name if new_category else "—"
@@ -258,8 +265,6 @@ async def handle_move(callback: CallbackQuery) -> None:
         if not gm.move_recipe_in_group(group_id, recipe_id, new_category_id):
             await callback.message.edit_text("❌ Не удалось переместить рецепт")
             return
-
-        cache.update(rk, {"recipe_id": recipe_id, "group_id": group_id})
 
         await callback.message.edit_text(
             f"✅ Рецепт перемещён в «{new_name}»",
@@ -273,38 +278,26 @@ async def handle_move(callback: CallbackQuery) -> None:
         await callback.message.edit_text("❌ Не удалось переместить рецепт. Попробуйте позже")
 
 
-def _rk_from(callback: CallbackQuery) -> str:
-    """Излекает rk (последний элемент) из callback_data."""
-    return callback.data.split(":")[-1]
-
-
 # ── Пересчёт порций ─────────────────────────────────────────────────────
 
 
 @router.callback_query(F.data.startswith("psc:"))
 async def handle_portions_change(callback: CallbackQuery) -> None:
     """Кнопка пересчёта числа порций: масштабирует ингредиенты."""
-    parts = _parse_callback(callback, 3)
-    if not parts:
-        await callback.answer("Ошибка данных", show_alert=True)
+    parts = _parse_callback(callback, 4)
+    if parts is None:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    rk, target_str = parts
+    recipe_id_str, group_id, target_str = parts
     try:
+        recipe_id = int(recipe_id_str)
         target = int(target_str)
     except ValueError:
-        await callback.answer("Ошибка данных", show_alert=True)
+        await callback.answer("Данные устарели", show_alert=True)
         return
     # Защита от подделанного callback_data
     target = max(PORTIONS_MIN, min(PORTIONS_MAX, target))
-
-    cached = cache.get(rk)
-    if not cached:
-        await callback.message.edit_text("❌ Данные устарели. Откройте рецепт заново")
-        return
-
-    recipe_id = cached["recipe_id"]
-    group_id = cached.get("group_id") or gm.get_user_active_group(callback.from_user.id)
 
     await callback.answer()
     await _restore_recipe_view(callback, recipe_id, group_id, portions_override=target)

@@ -2,6 +2,7 @@
 
 import logging
 import random
+import re
 
 from aiogram import Router, F
 from aiogram.fsm.state import State, StatesGroup
@@ -10,7 +11,6 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import services.group_manager as gm
-import services.cache as cache
 import services.rotation as rotation
 from models.recipe import Recipe
 from handlers.keyboards import (
@@ -84,8 +84,8 @@ def _pick_random_recipe(
     return {
         "recipe": recipe,
         "recipe_id": recipe_id,
+        "group_id": group_id,
         "source_url": gm.find_source_by_recipe_id(recipe_id),
-        "rk": cache.put_recipe(recipe_id, group_id),
         "category_id": category_id,
         "category_name": category_name,
     }
@@ -93,11 +93,11 @@ def _pick_random_recipe(
 
 def _random_recipe_markup(result: dict):
     """Inline-клавиатура для сообщения со случайным рецептом."""
-    rk = result["rk"]
+    ref = f"{result['recipe_id']}:{result['group_id']}"
     category_id = result["category_id"]
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{ref}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{ref}")
 
     source_url = result["source_url"]
     if source_url:
@@ -106,7 +106,7 @@ def _random_recipe_markup(result: dict):
     builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{category_id}")
 
     builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
-    add_portions_row(builder, rk, result["recipe"].portions)
+    add_portions_row(builder, ref, result["recipe"].portions)
     return builder.as_markup()
 
 
@@ -180,69 +180,78 @@ async def handle_search_query(message: Message, state: FSMContext) -> None:
     page_results = results[page * SEARCH_PAGE_SIZE:(page + 1) * SEARCH_PAGE_SIZE]
     total_pages = (len(results) + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE
 
-    cache_key = cache.put({
-        "results": results,
-        "query": query,
-    })
-
-    recipe_ids = []
-    for rid, slug, title, recipe_group_id in page_results:
-        rkey = cache.put_recipe(rid, recipe_group_id)
-        recipe_ids.append(rkey)
-
-    text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
-    kb = search_pagination_keyboard(cache_key, page, len(results))
+    text = _format_search_results(query, page_results, page, total_pages)
+    kb = search_pagination_keyboard(page, len(results))
 
     await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("spage:"))
 async def handle_search_page(callback: CallbackQuery) -> None:
-    """Пагинация результатов поиска"""
+    """Пагинация результатов поиска.
+
+    Stateless: поисковый запрос извлекается из текста самого сообщения, поиск
+    перевыполняется. Не зависит от in-memory кэша — переживает рестарт.
+    """
     parts = callback.data.split(":")
-    if len(parts) != 3:
-        await callback.answer("Ошибка данных", show_alert=True)
+    if len(parts) != 2:
+        await callback.answer("Данные устарели", show_alert=True)
+        return
+    try:
+        page = int(parts[1])
+    except ValueError:
+        await callback.answer("Данные устарели", show_alert=True)
         return
 
-    _, cache_key, page_str = parts
-    page = int(page_str)
-    cached = cache.get(cache_key)
-    if not cached:
-        await callback.message.edit_text("❌ Данные устарели. Попробуйте снова")
+    query = _extract_search_query(callback.message.text or "")
+    if query is None:
+        await callback.answer("Данные устарели. Начните поиск заново", show_alert=True)
         return
 
-    results = cached["results"]
-    query = cached["query"]
-    total = len(results)
-    total_pages = (total + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE
+    user_id = callback.from_user.id
+    active_group_id = gm.get_user_active_group(user_id)
+    group_ids = [g.group_id for g in gm.get_user_groups(user_id)]
+    results = gm.search_recipes_fulltext(group_ids, query, prefer_group_id=active_group_id)
+    if not results:
+        await callback.message.edit_text(f"📭 По запросу «{query}» ничего не найдено")
+        return
 
+    total_pages = (len(results) + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE
+    page = max(0, min(page, total_pages - 1))
     page_results = results[page * SEARCH_PAGE_SIZE:(page + 1) * SEARCH_PAGE_SIZE]
 
-    recipe_ids = []
-    for rid, slug, title, recipe_group_id in page_results:
-        rkey = cache.put_recipe(rid, recipe_group_id)
-        recipe_ids.append(rkey)
+    text = _format_search_results(query, page_results, page, total_pages)
+    kb = search_pagination_keyboard(page, len(results))
 
-    text = _format_search_results(query, page_results, recipe_ids, page, total_pages)
-    kb = search_pagination_keyboard(cache_key, page, total)
-
+    await callback.answer()
     await callback.message.edit_text(text, reply_markup=kb)
+
+
+_SEARCH_QUERY_RE = re.compile(r"«([^»]*)»")
+
+
+def _extract_search_query(text: str) -> str | None:
+    """Достаёт поисковый запрос из текста сообщения с результатами поиска."""
+    match = _SEARCH_QUERY_RE.search(text)
+    return match.group(1) if match else None
 
 
 def _format_search_results(
     query: str,
     page_results: list[tuple[int, str, str, str]],
-    recipe_ids: list[int],
     page: int,
     total_pages: int,
 ) -> str:
-    """Форматирует страницу результатов поиска."""
+    """Форматирует страницу результатов поиска.
+
+    Каждый рецепт доступен через ``/open{recipe_id}`` — глубокая ссылка не
+    зависит от кэша и переживает рестарт процесса.
+    """
     lines = [f"🔎 Результаты поиска «{query}»:\n"]
 
-    for i, (rid, slug, title, group_id) in enumerate(page_results):
-        rkey = recipe_ids[i]
-        lines.append(f"{title}")
-        lines.append(f"Открыть: /open{rkey}")
+    for rid, slug, title, group_id in page_results:
+        lines.append(title)
+        lines.append(f"Открыть: /open{rid}")
         lines.append("")
 
     if total_pages > 1:
@@ -251,24 +260,19 @@ def _format_search_results(
     return "\n".join(lines).strip()
 
 
-# ── Открытие рецепта по /open{key} ──────────────────────────────────────
+# ── Открытие рецепта по /open{recipe_id} ────────────────────────────────
 
 @router.message(F.text.regexp(r"^/open\d+$"))
 async def handle_open_recipe(message: Message) -> None:
-    """Открытие рецепта по /open{key}"""
-    key = message.text[5:]
-    cached = cache.get(key)
-    if not cached:
-        await message.answer("❌ Рецепт не найден. Попробуйте поиск заново")
-        return
-
-    recipe_id = cached["recipe_id"]
-    group_id = cached.get("group_id") or gm.get_user_active_group(message.from_user.id)
+    """Открытие рецепта по /open{recipe_id} (без обращения к кэшу)."""
+    recipe_id = int(message.text[5:])
 
     recipe_data = gm.get_recipe(recipe_id)
     if not recipe_data:
         await message.answer("❌ Рецепт не найден")
         return
+
+    group_id = _resolve_recipe_group(message.from_user.id, recipe_id)
 
     recipe = Recipe.from_markdown(recipe_data["content_md"], recipe_data["source"])
 
@@ -276,19 +280,31 @@ async def handle_open_recipe(message: Message) -> None:
     category_name = category.name if category else None
     source_url = gm.find_source_by_recipe_id(recipe_id)
 
-    rk = cache.put_recipe(recipe_id, group_id)
+    ref = f"{recipe_id}:{group_id}"
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{ref}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{ref}")
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
     builder.adjust(2, 1) if source_url else builder.adjust(2)
-    add_portions_row(builder, rk, recipe.portions)
+    add_portions_row(builder, ref, recipe.portions)
 
     await message.answer(
         recipe.format_message(category_name),
         reply_markup=builder.as_markup(),
     )
+
+
+def _resolve_recipe_group(user_id: int, recipe_id: int) -> str:
+    """Группа для показа рецепта: активная, а если рецепта в ней нет — любая
+    группа пользователя, содержащая рецепт (фолбэк для кросс-групповых ссылок)."""
+    active = gm.get_user_active_group(user_id)
+    if gm.recipe_in_group(active, recipe_id):
+        return active
+    for g in gm.get_user_groups(user_id):
+        if gm.recipe_in_group(g.group_id, recipe_id):
+            return g.group_id
+    return active
 
 
 # ── Хэндлер кнопок-категорий (регистрируется последним, чтобы не перехватывать

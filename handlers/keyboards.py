@@ -50,12 +50,13 @@ def _portions_label(n: int) -> str:
 
 def add_portions_row(
     builder: InlineKeyboardBuilder,
-    rk,
+    ref: str,
     base_portions: int,
     current_portions: int | None = None,
 ) -> None:
     """Добавляет в ``builder`` ряд пересчёта порций ``[➖][N порций][➕]``.
 
+    ref: payload рецепта вида ``recipe_id:group_id`` (без обращения к кэшу).
     No-op при ``base_portions <= 0`` (не на что делить). Кнопки на границах
     диапазона ``PORTIONS_MIN..PORTIONS_MAX`` скрываются.
     """
@@ -65,12 +66,12 @@ def add_portions_row(
     row: list[InlineKeyboardButton] = []
     if current > PORTIONS_MIN:
         row.append(InlineKeyboardButton(
-            text="➖", callback_data=f"psc:{rk}:{current - 1}"))
+            text="➖", callback_data=f"psc:{ref}:{current - 1}"))
     row.append(InlineKeyboardButton(
         text=_portions_label(current), callback_data="pnoop"))
     if current < PORTIONS_MAX:
         row.append(InlineKeyboardButton(
-            text="➕", callback_data=f"psc:{rk}:{current + 1}"))
+            text="➕", callback_data=f"psc:{ref}:{current + 1}"))
     builder.row(*row)
 
 
@@ -89,12 +90,15 @@ def recipe_keyboard(
         кнопками добавляется ряд пересчёта порций ``[➖][N порций][➕]``.
     current_portions: текущее выбранное число порций (для кнопок пересчёта);
         ``None`` означает первичный показ (``current = base_portions``).
+
+    Кнопки не зависят от in-memory кэша: в ``callback_data`` кодируется
+    ``recipe_id:group_id``, поэтому переживают рестарт процесса.
     """
-    rk = cache.put_recipe(recipe_id, group_id)
+    ref = f"{recipe_id}:{group_id}"
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑", callback_data=f"del:{rk}")
-    builder.button(text="📂 Перенести", callback_data=f"rcat:{rk}")
+    builder.button(text="🗑", callback_data=f"del:{ref}")
+    builder.button(text="📂 Перенести", callback_data=f"rcat:{ref}")
 
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
@@ -111,16 +115,19 @@ def recipe_keyboard(
     else:
         builder.adjust(2)
 
-    add_portions_row(builder, rk, base_portions, current_portions)
+    add_portions_row(builder, ref, base_portions, current_portions)
 
     return builder.as_markup()
 
 
-def confirm_delete_keyboard(rk) -> InlineKeyboardMarkup:
-    """Клавиатура подтверждения удаления рецепта (Да / Нет)."""
+def confirm_delete_keyboard(ref: str) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения удаления рецепта (Да / Нет).
+
+    ref: payload рецепта вида ``recipe_id:group_id``.
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text="Да", callback_data=f"delok:{rk}")
-    builder.button(text="Нет", callback_data=f"delcn:{rk}")
+    builder.button(text="Да", callback_data=f"delok:{ref}")
+    builder.button(text="Нет", callback_data=f"delcn:{ref}")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -134,34 +141,40 @@ def duplicate_keyboard(recipe_id: int, recipe: object = None) -> InlineKeyboardM
     builder.button(text="📝 Сохранить как новый", callback_data=f"sn:{rk}")
     builder.adjust(2)
 
-    return builder.as_markup
+    return builder.as_markup()
 
 
 def category_select_keyboard(
     group_id: str,
-    rk,
+    ref: str,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура выбора категории для переноса рецепта."""
+    """Клавиатура выбора категории для переноса рецепта.
+
+    ref: payload рецепта вида ``recipe_id:group_id`` (прокидывается дальше в
+    ``mov:`` без обращения к кэшу).
+    """
     categories = gm.get_group_categories(group_id)
 
     builder = InlineKeyboardBuilder()
     for cat in categories:
         builder.button(
             text=cat.name,
-            callback_data=f"mov:{cat.category_id}:{rk}",
+            callback_data=f"mov:{cat.category_id}:{ref}",
         )
-    builder.button(text="🔙 Отмена", callback_data=f"delcn:{rk}")
+    builder.button(text="🔙 Отмена", callback_data=f"delcn:{ref}")
     builder.adjust(1)
 
-    return builder.as_markup
+    return builder.as_markup()
 
 
 def search_pagination_keyboard(
-    cache_key: str,
     page: int,
     total: int,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура пагинации для результатов поиска."""
+    """Клавиатура пагинации для результатов поиска (stateless).
+
+    Колбэки несут только номер страницы; запрос извлекается из текста сообщения.
+    """
     builder = InlineKeyboardBuilder()
 
     has_prev = page > 0
@@ -169,14 +182,14 @@ def search_pagination_keyboard(
     has_next = (page + 1) * page_size < total
 
     if has_prev and has_next:
-        builder.button(text="« Назад", callback_data=f"spage:{cache_key}:{page - 1}")
-        builder.button(text="Вперед »", callback_data=f"spage:{cache_key}:{page + 1}")
+        builder.button(text="« Назад", callback_data=f"spage:{page - 1}")
+        builder.button(text="Вперед »", callback_data=f"spage:{page + 1}")
         builder.adjust(2)
     elif has_prev:
-        builder.button(text="« Назад", callback_data=f"spage:{cache_key}:{page - 1}")
+        builder.button(text="« Назад", callback_data=f"spage:{page - 1}")
         builder.adjust(1)
     elif has_next:
-        builder.button(text="Вперед »", callback_data=f"spage:{cache_key}:{page + 1}")
+        builder.button(text="Вперед »", callback_data=f"spage:{page + 1}")
         builder.adjust(1)
 
     return builder.as_markup()

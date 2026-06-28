@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import services.group_manager as gm
-import services.cache as cache
 from handlers.buttons import (
     handle_delete,
     handle_delete_confirm,
@@ -49,20 +48,12 @@ def _make_callback(data: str) -> MagicMock:
     return cb
 
 
-@pytest.fixture(autouse=True)
-def _clear_cache():
-    cache.clear()
-    yield
-    cache.clear()
-
-
 class TestDeleteConfirmation:
     """Шаг 1: показ диалога подтверждения"""
 
     @pytest.mark.asyncio
     async def test_handle_delete_shows_dialog_with_title(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"del:{rk}")
+        cb = _make_callback("del:42:g1")
 
         with patch.object(
             gm,
@@ -80,8 +71,7 @@ class TestDeleteConfirmation:
 
     @pytest.mark.asyncio
     async def test_handle_delete_falls_back_to_recipe_id_when_no_recipe(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"del:{rk}")
+        cb = _make_callback("del:42:g1")
 
         with patch.object(gm, "get_recipe", return_value=None):
             await handle_delete(cb)
@@ -95,8 +85,7 @@ class TestDeleteConfirm:
 
     @pytest.mark.asyncio
     async def test_confirm_removes_recipe(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"delok:{rk}")
+        cb = _make_callback("delok:42:g1")
 
         with patch.object(gm, "remove_recipe_from_group", return_value=True) as m_remove, \
                 patch.object(gm, "recipe_exists_in_any_group", return_value=False), \
@@ -110,8 +99,7 @@ class TestDeleteConfirm:
 
     @pytest.mark.asyncio
     async def test_confirm_keeps_recipe_when_in_other_group(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"delok:{rk}")
+        cb = _make_callback("delok:42:g1")
 
         with patch.object(gm, "remove_recipe_from_group", return_value=True), \
                 patch.object(gm, "recipe_exists_in_any_group", return_value=True), \
@@ -126,8 +114,7 @@ class TestDeleteCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_restores_recipe_view(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"delcn:{rk}")
+        cb = _make_callback("delcn:42:g1")
 
         with patch.object(
             gm,
@@ -146,8 +133,7 @@ class TestDeleteCancel:
 
     @pytest.mark.asyncio
     async def test_cancel_shows_error_when_recipe_gone(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"delcn:{rk}")
+        cb = _make_callback("delcn:42:g1")
 
         with patch.object(gm, "get_recipe", return_value=None):
             await handle_delete_cancel(cb)
@@ -178,8 +164,7 @@ class TestPortionsChange:
 
     @pytest.mark.asyncio
     async def test_psc_scales_ingredients_and_shows_current(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"psc:{rk}:6")
+        cb = _make_callback("psc:42:g1:6")
 
         with patch.object(
             gm, "get_recipe",
@@ -198,13 +183,12 @@ class TestPortionsChange:
         texts = _button_texts(markup)
         cbs = _button_callbacks(markup)
         assert "6 порций" in texts
-        assert any(c == f"psc:10005:5" for c in cbs) or any(":5" in c for c in cbs)
-        assert any(":7" in c for c in cbs)
+        assert "psc:42:g1:5" in cbs
+        assert "psc:42:g1:7" in cbs
 
     @pytest.mark.asyncio
     async def test_psc_clamps_target_to_max(self):
-        rk = cache.put({"recipe_id": 42, "group_id": "g1"})
-        cb = _make_callback(f"psc:{rk}:50")
+        cb = _make_callback("psc:42:g1:50")
 
         with patch.object(
             gm, "get_recipe",
@@ -220,10 +204,11 @@ class TestPortionsChange:
         assert "➕" not in texts
 
     @pytest.mark.asyncio
-    async def test_psc_stale_rk_shows_expired(self):
-        cb = _make_callback("psc:99999:6")
-        # cache.get вернёт None (ключа нет)
+    async def test_psc_malformed_callback_shows_alert(self):
+        # некорректная структура (нет group_id/числа порций) → alert, без БД
+        cb = _make_callback("psc:42:6")
+
         await handle_portions_change(cb)
 
-        text = cb.message.edit_text.call_args.args[0]
-        assert "устарели" in text
+        cb.answer.assert_awaited_once()
+        cb.message.edit_text.assert_not_awaited()
