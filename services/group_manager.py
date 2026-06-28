@@ -837,6 +837,39 @@ def get_all_recipe_slugs() -> list[tuple[int, str]]:
         return [(r["recipe_id"], r["slug"]) for r in rows]
 
 
+def get_all_recipes_content() -> list[dict]:
+    """Возвращает (recipe_id, content_md, created, source) всех рецептов.
+
+    Используется бэкфиллом КБЖУ для перебора существующих рецептов.
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT recipe_id, content_md, created, source FROM recipes ORDER BY recipe_id"
+        ).fetchall()
+        return [
+            {
+                "recipe_id": r["recipe_id"],
+                "content_md": r["content_md"],
+                "created": r["created"],
+                "source": r["source"],
+            }
+            for r in rows
+        ]
+
+
+def update_recipe_content_md(recipe_id: int, content_md: str) -> None:
+    """Обновляет только content_md рецепта (для бэкфилла КБЖУ).
+
+    Не затрагивает recipe_ingredients/reel_index/group_recipes и не переиндексирует
+    леммы: КБЖУ хранится в frontmatter и не влияет на поиск.
+    """
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE recipes SET content_md = ? WHERE recipe_id = ?",
+            (content_md, recipe_id),
+        )
+
+
 # ── Полнотекстовый поиск ──────────────────────────────────────────────
 
 def search_recipes_fulltext(

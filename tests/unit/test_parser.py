@@ -304,3 +304,83 @@ class TestDynamicCategories:
             response, "src", ["завтрак", "на праздник"], "на праздник"
         )
         assert recipe.category == "на праздник"
+
+
+class TestNutritionExtraction:
+    """Извлечение КБЖУ и порций из ответа LLM."""
+
+    def test_parse_nutrition_block(self):
+        response = (
+            "Название: Борщ\n\n"
+            "Ингредиенты:\n- Свекла 400г\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: основное блюдо\n\n"
+            "Порции: 4\n"
+            "Калории: 1280\n"
+            "Белки: 80\n"
+            "Жиры: 40\n"
+            "Углеводы: 120\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["основное блюдо"], "основное блюдо"
+        )
+        assert recipe.portions == 4
+        assert recipe.calories == 1280
+        assert recipe.protein == 80
+        assert recipe.fat == 40
+        assert recipe.carbs == 120
+
+    def test_parse_nutrition_with_units(self):
+        """Значения с единицами («1280 ккал», «80 г») парсятся до числа"""
+        response = (
+            "Название: Борщ\n\n"
+            "Ингредиенты:\n- Свекла\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: основное блюдо\n\n"
+            "Порции: 4 порции\n"
+            "Калории: 1280 ккал\n"
+            "Белки: 80 г\n"
+            "Жиры: 40 грамм\n"
+            "Углеводы: 120 г\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["основное блюдо"], "основное блюдо"
+        )
+        assert recipe.portions == 4
+        assert recipe.calories == 1280
+        assert recipe.protein == 80
+        assert recipe.fat == 40
+        assert recipe.carbs == 120
+
+    def test_nutrition_absent_defaults_zero(self):
+        """Отсутствие блока КБЖУ → поля 0, парсинг не падает"""
+        response = (
+            "Название: Борщ\n\n"
+            "Ингредиенты:\n- Свекла\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: основное блюдо\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["основное блюдо"], "основное блюдо"
+        )
+        assert recipe.portions == 0
+        assert recipe.calories == 0
+        assert recipe.protein == 0
+        assert recipe.fat == 0
+        assert recipe.carbs == 0
+
+    def test_nutrition_non_numeric_defaults_zero(self):
+        """Не-числовые значения КБЖУ → поля 0"""
+        response = (
+            "Название: Борщ\n\n"
+            "Ингредиенты:\n- Свекла\n\n"
+            "Способ приготовления:\nШаг 1: Варить\n\n"
+            "Категория: основное блюдо\n\n"
+            "Порции: много\n"
+            "Калории: неизвестно\n"
+        )
+        recipe = _parse_recipe_response(
+            response, "src", ["основное блюдо"], "основное блюдо"
+        )
+        assert recipe.portions == 0
+        assert recipe.calories == 0

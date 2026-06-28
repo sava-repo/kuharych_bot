@@ -12,6 +12,8 @@ from handlers.keyboards import (
     recipe_keyboard,
     category_select_keyboard,
     confirm_delete_keyboard,
+    PORTIONS_MIN,
+    PORTIONS_MAX,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,8 +38,18 @@ def _cached(callback: CallbackQuery, parts_count: int) -> dict | None:
     return cache.get(rk)
 
 
-async def _restore_recipe_view(callback: CallbackQuery, recipe_id: int, group_id: str) -> None:
-    """Восстанавливает сообщение с рецептом и стандартной клавиатурой."""
+async def _restore_recipe_view(
+    callback: CallbackQuery,
+    recipe_id: int,
+    group_id: str,
+    *,
+    portions_override: int | None = None,
+) -> None:
+    """Восстанавливает сообщение с рецептом и стандартной клавиатурой.
+
+    portions_override: выбранное число порций; при передаче ингредиенты
+        пересчитываются, а клавиатура показывает его как текущее.
+    """
     recipe_data = gm.get_recipe(recipe_id)
     if not recipe_data:
         await callback.message.edit_text("❌ Рецепт не найден")
@@ -49,8 +61,14 @@ async def _restore_recipe_view(callback: CallbackQuery, recipe_id: int, group_id
     source_url = gm.find_source_by_recipe_id(recipe_id)
 
     await callback.message.edit_text(
-        recipe.format_message(category_name),
-        reply_markup=recipe_keyboard(recipe_id, group_id, source_url=source_url),
+        recipe.format_message(category_name, portions_override=portions_override),
+        reply_markup=recipe_keyboard(
+            recipe_id,
+            group_id,
+            source_url=source_url,
+            base_portions=recipe.portions,
+            current_portions=portions_override,
+        ),
     )
 
 
@@ -258,3 +276,41 @@ async def handle_move(callback: CallbackQuery) -> None:
 def _rk_from(callback: CallbackQuery) -> str:
     """Излекает rk (последний элемент) из callback_data."""
     return callback.data.split(":")[-1]
+
+
+# ── Пересчёт порций ─────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("psc:"))
+async def handle_portions_change(callback: CallbackQuery) -> None:
+    """Кнопка пересчёта числа порций: масштабирует ингредиенты."""
+    parts = _parse_callback(callback, 3)
+    if not parts:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    rk, target_str = parts
+    try:
+        target = int(target_str)
+    except ValueError:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+    # Защита от подделанного callback_data
+    target = max(PORTIONS_MIN, min(PORTIONS_MAX, target))
+
+    cached = cache.get(rk)
+    if not cached:
+        await callback.message.edit_text("❌ Данные устарели. Откройте рецепт заново")
+        return
+
+    recipe_id = cached["recipe_id"]
+    group_id = cached.get("group_id") or gm.get_user_active_group(callback.from_user.id)
+
+    await callback.answer()
+    await _restore_recipe_view(callback, recipe_id, group_id, portions_override=target)
+
+
+@router.callback_query(F.data == "pnoop")
+async def handle_portions_noop(callback: CallbackQuery) -> None:
+    """Центральная кнопка «N порций»: закрывает спиннер без действия."""
+    await callback.answer()

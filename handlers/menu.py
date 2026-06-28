@@ -13,7 +13,11 @@ import services.group_manager as gm
 import services.cache as cache
 import services.rotation as rotation
 from models.recipe import Recipe
-from handlers.keyboards import build_menu_keyboard, search_pagination_keyboard
+from handlers.keyboards import (
+    build_menu_keyboard,
+    search_pagination_keyboard,
+    add_portions_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,7 @@ def _random_recipe_markup(result: dict):
     builder.button(text="🎲 Другой рецепт", callback_data=f"rnd:{category_id}")
 
     builder.adjust(3, 1) if source_url else builder.adjust(2, 1)
+    add_portions_row(builder, rk, result["recipe"].portions)
     return builder.as_markup()
 
 
@@ -278,6 +283,7 @@ async def handle_open_recipe(message: Message) -> None:
     if source_url:
         builder.button(text="▶️ Посмотреть", url=source_url)
     builder.adjust(2, 1) if source_url else builder.adjust(2)
+    add_portions_row(builder, rk, recipe.portions)
 
     await message.answer(
         recipe.format_message(category_name),

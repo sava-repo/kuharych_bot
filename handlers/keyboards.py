@@ -2,6 +2,7 @@
 
 from aiogram.types import (
     InlineKeyboardMarkup,
+    InlineKeyboardButton,
     ReplyKeyboardMarkup,
     KeyboardButton,
 )
@@ -31,14 +32,64 @@ def build_menu_keyboard(group_id: str) -> ReplyKeyboardMarkup:
 # ── Inline-клавиатуры для рецептов ──────────────────────────────────────
 
 
+# Границы числа порций кнопками пересчёта
+PORTIONS_MIN = 1
+PORTIONS_MAX = 20
+
+
+def _portions_label(n: int) -> str:
+    """Название кнопки с текущим числом порций (с плюрализацией)."""
+    if n % 10 == 1 and n % 100 != 11:
+        word = "порция"
+    elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        word = "порции"
+    else:
+        word = "порций"
+    return f"{n} {word}"
+
+
+def add_portions_row(
+    builder: InlineKeyboardBuilder,
+    rk,
+    base_portions: int,
+    current_portions: int | None = None,
+) -> None:
+    """Добавляет в ``builder`` ряд пересчёта порций ``[➖][N порций][➕]``.
+
+    No-op при ``base_portions <= 0`` (не на что делить). Кнопки на границах
+    диапазона ``PORTIONS_MIN..PORTIONS_MAX`` скрываются.
+    """
+    if base_portions <= 0:
+        return
+    current = base_portions if current_portions is None else current_portions
+    row: list[InlineKeyboardButton] = []
+    if current > PORTIONS_MIN:
+        row.append(InlineKeyboardButton(
+            text="➖", callback_data=f"psc:{rk}:{current - 1}"))
+    row.append(InlineKeyboardButton(
+        text=_portions_label(current), callback_data="pnoop"))
+    if current < PORTIONS_MAX:
+        row.append(InlineKeyboardButton(
+            text="➕", callback_data=f"psc:{rk}:{current + 1}"))
+    builder.row(*row)
+
+
 def recipe_keyboard(
     recipe_id: int,
     group_id: str | None = None,
     *,
     source_url: str | None = None,
     include_random: bool = False,
+    base_portions: int = 0,
+    current_portions: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура под рецептом."""
+    """Клавиатура под рецептом.
+
+    base_portions: базовое число порций рецепта (из LLM). При >0 под основными
+        кнопками добавляется ряд пересчёта порций ``[➖][N порций][➕]``.
+    current_portions: текущее выбранное число порций (для кнопок пересчёта);
+        ``None`` означает первичный показ (``current = base_portions``).
+    """
     rk = cache.put_recipe(recipe_id, group_id)
 
     builder = InlineKeyboardBuilder()
@@ -59,6 +110,8 @@ def recipe_keyboard(
         builder.adjust(2, 1)
     else:
         builder.adjust(2)
+
+    add_portions_row(builder, rk, base_portions, current_portions)
 
     return builder.as_markup()
 

@@ -152,6 +152,9 @@ def _parse_recipe_response(
     # Генерируем теги из названия и ингредиентов
     tags = _generate_tags(title, ingredients)
 
+    # Извлекаем КБЖУ (тотальные на всё блюдо) и порции
+    nutrition = _extract_nutrition(text)
+
     return Recipe(
         title=title,
         ingredients=ingredients,
@@ -159,7 +162,46 @@ def _parse_recipe_response(
         category=category,
         source=source,
         tags=tags,
+        portions=nutrition["portions"],
+        calories=nutrition["calories"],
+        protein=nutrition["protein"],
+        fat=nutrition["fat"],
+        carbs=nutrition["carbs"],
     )
+
+
+def _extract_nutrition(text: str) -> dict[str, int]:
+    """Извлекает КБЖУ и порции из ответа LLM.
+
+    Ищет строки вида «Порции: 4», «Калории: 1280» и т.п. Берёт первое целое
+    число в значении (терпимо к единицам вроде «1280 ккал»). При отсутствии
+    строки или не-числе поле остаётся 0.
+    """
+    mapping = {
+        "порции": "portions",
+        "калории": "calories",
+        "белки": "protein",
+        "жиры": "fat",
+        "углеводы": "carbs",
+    }
+    result = {field: 0 for field in mapping.values()}
+    for line in text.split("\n"):
+        stripped = line.strip()
+        low = stripped.lower()
+        for ru_key, field in mapping.items():
+            if low.startswith(f"{ru_key}:"):
+                result[field] = _parse_nutrition_int(stripped.split(":", 1)[1])
+                break
+    return result
+
+
+def _parse_nutrition_int(value: str) -> int:
+    """Первое целое число в строке значения; 0 при отсутствии."""
+    for token in value.split():
+        token = token.strip(".,;:()")
+        if token.isdigit():
+            return int(token)
+    return 0
 
 
 def _generate_tags(title: str, ingredients: list[str]) -> list[str]:

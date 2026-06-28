@@ -7,6 +7,17 @@
 
 import json
 from dataclasses import dataclass, field
+from fractions import Fraction
+
+from services.ingredient_scaler import scale_ingredients
+
+
+def _parse_frontmatter_int(line: str) -> int:
+    """Парсит целое из строки frontmatter вида 'key: 42'; при не-числе возвращает 0."""
+    try:
+        return int(line.split(":", 1)[1].strip())
+    except (ValueError, TypeError):
+        return 0
 
 
 @dataclass
@@ -17,6 +28,12 @@ class Recipe:
     source: str
     category: str = ""  # transient: suggestion LLM, не сохраняется в content_md
     tags: list[str] = field(default_factory=list)
+    # КБЖУ — тотальные значения на всё блюдо (LLM-оценка); 0 = отсутствует
+    portions: int = 0
+    calories: int = 0
+    protein: int = 0
+    fat: int = 0
+    carbs: int = 0
 
     @property
     def slug(self) -> str:
@@ -30,23 +47,59 @@ class Recipe:
             slug = slug.replace("--", "-")
         return slug.strip("-")
 
-    def format_message(self, category_name: str | None = None) -> str:
+    def format_message(
+        self,
+        category_name: str | None = None,
+        *,
+        portions_override: int | None = None,
+    ) -> str:
         """Форматирование рецепта для отправки в чат.
 
         category_name: имя категории в активной группе (выводится отдельной
             строкой, если передано). Категория — контекст группы, а не рецепта.
+        portions_override: выбранное пользователем число порций. При передаче
+            значения, отличного от ``self.portions`` (и при ``self.portions > 0``),
+            ингредиенты пересчитываются через ``factor = override/portions``.
+            Способ приготовления и строка КБЖУ не меняются. Результат эфемерен
+            (только в сообщении, без записи в БД).
         """
-        ingredients_text = "\n".join(f"• {ing}" for ing in self.ingredients)
+        if portions_override and portions_override != self.portions and self.portions > 0:
+            factor = Fraction(portions_override, self.portions)
+            ingredients = scale_ingredients(self.ingredients, factor)
+        else:
+            ingredients = self.ingredients
+
+        ingredients_text = "\n".join(f"• {ing}" for ing in ingredients)
         steps_text = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(self.steps))
 
-        msg = (
-            f"🍳 {self.title}\n\n"
+        msg = f"🍳 {self.title}\n\n"
+        nutrition_line = self._nutrition_line()
+        if nutrition_line:
+            msg += f"{nutrition_line}\n\n"
+        msg += (
             f"📋 Ингредиенты:\n{ingredients_text}\n\n"
             f"👨‍🍳 Приготовление:\n{steps_text}"
         )
         if category_name:
             msg += f"\n\n📂 Категория: {category_name}"
         return msg
+
+    def _nutrition_line(self) -> str:
+        """Строка КБЖУ на одну порцию или пустая строка, если данных нет.
+
+        Выводится только при `calories > 0` и `portions > 0`. Значения на порцию
+        рассчитываются как total // portions (целочисленно, округление вниз).
+        """
+        if self.calories <= 0 or self.portions <= 0:
+            return ""
+        cal = self.calories // self.portions
+        prot = self.protein // self.portions
+        fat = self.fat // self.portions
+        carbs = self.carbs // self.portions
+        portions_note = "на 1 порцию" if self.portions == 1 else f"1 порция из {self.portions}"
+        return (
+            f"≈{cal} ккал · Б {prot} / Ж {fat} / У {carbs}   ({portions_note})"
+        )
 
     def to_markdown(self, created: str) -> str:
         """Форматирование рецепта в Markdown с YAML frontmatter.
@@ -64,6 +117,11 @@ class Recipe:
             f'source: "{self.source}"\n'
             f'created: "{created}"\n'
             f"tags: {tags_str}\n"
+            f"portions: {self.portions}\n"
+            f"calories: {self.calories}\n"
+            f"protein: {self.protein}\n"
+            f"fat: {self.fat}\n"
+            f"carbs: {self.carbs}\n"
             f"---\n\n"
             f"# {self.title}\n\n"
             f"## Ингредиенты\n{ingredients_text}\n\n"
@@ -85,7 +143,9 @@ class Recipe:
         title = ""
         ingredients: list[str] = []
         steps: list[str] = []
+        tags: list[str] = []
         current_section: str | None = None
+        portions = calories = protein = fat = carbs = 0
 
         for line in lines:
             stripped = line.strip()
@@ -94,8 +154,34 @@ class Recipe:
             if stripped.startswith("title:"):
                 title = stripped.replace("title:", "").strip().strip('"')
                 continue
-            # Категория в frontmatter игнорируется (не атрибут рецепта)
-            if stripped.startswith(("category:", "source:", "created:", "tags:")):
+            # КБЖУ из frontmatter (int, толерантно к не-числам/отсутствию)
+            if stripped.startswith("portions:"):
+                portions = _parse_frontmatter_int(stripped)
+                continue
+            if stripped.startswith("calories:"):
+                calories = _parse_frontmatter_int(stripped)
+                continue
+            if stripped.startswith("protein:"):
+                protein = _parse_frontmatter_int(stripped)
+                continue
+            if stripped.startswith("fat:"):
+                fat = _parse_frontmatter_int(stripped)
+                continue
+            if stripped.startswith("carbs:"):
+                carbs = _parse_frontmatter_int(stripped)
+                continue
+            # tags из frontmatter (JSON-массив)
+            if stripped.startswith("tags:"):
+                tags_json = stripped.split(":", 1)[1].strip()
+                try:
+                    parsed = json.loads(tags_json)
+                    if isinstance(parsed, list):
+                        tags = [str(t) for t in parsed]
+                except (ValueError, TypeError):
+                    tags = []
+                continue
+            # Прочие служебные ключи frontmatter игнорируются (категория — не атрибут рецепта)
+            if stripped.startswith(("category:", "source:", "created:")):
                 continue
             if stripped.startswith("# "):
                 title = stripped[2:].strip()
@@ -119,6 +205,12 @@ class Recipe:
             steps=steps,
             category="",
             source=source,
+            tags=tags,
+            portions=portions,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
         )
 
     @staticmethod
